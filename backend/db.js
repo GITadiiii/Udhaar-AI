@@ -203,6 +203,22 @@ function normalizePhone(phone) {
   return phone.replace(/\D/g, '');
 }
 
+export function getLocalDateStr(dateInput) {
+  if (!dateInput) return '';
+  const dateObj = new Date(dateInput);
+  if (isNaN(dateObj.getTime())) return '';
+  const offset = 5.5 * 60 * 60 * 1000; // IST offset
+  const istDate = new Date(dateObj.getTime() + offset);
+  const year = istDate.getUTCFullYear();
+  const month = String(istDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(istDate.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function getTodayStr() {
+  return getLocalDateStr(new Date());
+}
+
 export function getCalendarDaysDiff(date1, date2) {
   const d1 = new Date(date1);
   const d2 = new Date(date2);
@@ -662,7 +678,7 @@ export function getCustomers(merchantId, dateStr) {
   return (db.customers || [])
     .filter(customer => {
       if (customer.deleted || (customer.merchant_id || 'merchant_1') !== targetMerchantId) return false;
-      if (targetDate && customer.created_at.slice(0, 10) > targetDate) return false;
+      if (targetDate && getLocalDateStr(customer.created_at) > targetDate) return false;
       return true;
     })
     .map(customer => {
@@ -672,7 +688,7 @@ export function getCustomers(merchantId, dateStr) {
       );
 
       const filteredTxs = targetDate 
-        ? custTxs.filter(t => t.date.slice(0, 10) <= targetDate)
+        ? custTxs.filter(t => getLocalDateStr(t.date) <= targetDate)
         : custTxs;
 
       const balance = filteredTxs.reduce((sum, t) => {
@@ -700,8 +716,8 @@ export function invalidateMerchantSummaries(db, merchantId) {
 
 export function invalidateSpecificSummary(db, merchantId, dateStr) {
   const targetMerchantId = merchantId || 'merchant_1';
-  const txDateStr = dateStr.slice(0, 10);
-  const todayDateStr = new Date().toISOString().slice(0, 10);
+  const txDateStr = getLocalDateStr(dateStr);
+  const todayDateStr = getTodayStr();
   db.daily_summaries = (db.daily_summaries || []).filter(s => 
     (s.merchant_id || 'merchant_1') !== targetMerchantId || 
     (s.date !== txDateStr && s.date !== todayDateStr)
@@ -1045,7 +1061,7 @@ export function getCustomerLedger(customerId, merchantId, dateStr) {
 
   const targetDate = dateStr ? dateStr.slice(0, 10) : null;
   const transactions = (db.transactions || [])
-    .filter(t => t.customer_id === customerId && (t.merchant_id || 'merchant_1') === targetMerchantId && (!targetDate || t.date.slice(0, 10) <= targetDate))
+    .filter(t => t.customer_id === customerId && (t.merchant_id || 'merchant_1') === targetMerchantId && (!targetDate || getLocalDateStr(t.date) <= targetDate))
     .sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime());
 
   const reminders = getReminders(targetMerchantId, dateStr).filter(r => r.customer_id === customerId);
@@ -1121,7 +1137,7 @@ export function getReminders(merchantId, dateStr) {
   const customers = (db.customers || []).filter(c => !c.deleted && (c.merchant_id || 'merchant_1') === targetMerchantId);
   const transactions = db.transactions || [];
   
-  const targetDate = dateStr ? dateStr.slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const targetDate = dateStr ? dateStr.slice(0, 10) : getTodayStr();
 
   const remindersList = [];
 
@@ -1129,7 +1145,7 @@ export function getReminders(merchantId, dateStr) {
     const customerTxs = transactions.filter(t => 
       t.customer_id === customer.id && 
       (t.merchant_id || 'merchant_1') === targetMerchantId &&
-      t.date.slice(0, 10) <= targetDate
+      getLocalDateStr(t.date) <= targetDate
     );
 
     const balance = customerTxs.reduce((sum, t) => {

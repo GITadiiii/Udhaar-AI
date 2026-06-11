@@ -389,7 +389,7 @@ export async function extractTransactionFromVoice(transcript, customers) {
 
   try {
     return await callWithGemini(async (genAI) => {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
       
       const customerListString = customers.map(c => 
         `ID: ${c.id}, Name: ${c.name}, Aliases: [${(c.aliases || []).join(', ')}]`

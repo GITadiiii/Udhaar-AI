@@ -14,7 +14,9 @@ import {
   mergeDuplicateCustomers,
   deleteCustomer,
   updateCustomer,
-  getLevenshteinDistance
+  getLevenshteinDistance,
+  getLocalDateStr,
+  getTodayStr
 } from './db.js';
 import { 
   extractTransactionFromVoice, 
@@ -37,13 +39,7 @@ function isConfidentMatch(customerName, queryName) {
   return similarity >= 0.95;
 }
 
-const getTodayStr = () => {
-  const localDate = new Date();
-  const year = localDate.getFullYear();
-  const month = String(localDate.getMonth() + 1).padStart(2, '0');
-  const day = String(localDate.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
+// getTodayStr is now imported from db.js
 
 const getMerchantId = (req) => {
   return req.headers['x-merchant-id'] || 'merchant_1';
@@ -314,28 +310,40 @@ app.post('/api/voice/process', async (req, res) => {
 app.get('/api/summary/daily', async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
-    // Default to the current system date as metadata
+    // Default to the current system date in user local timezone
     const dateStr = req.query.date || getTodayStr();
+    const targetDate = dateStr.slice(0, 10);
     
     const db = readDb();
-    const existingSummary = (db.daily_summaries || []).find(s => s.date === dateStr && (s.merchant_id || 'merchant_1') === merchantId);
     
+    // Check if daily summary is already cached
+    const existingSummary = (db.daily_summaries || []).find(
+      s => s.date === targetDate && (s.merchant_id || 'merchant_1') === merchantId
+    );
     if (existingSummary) {
       return res.json(existingSummary);
     }
     
     // Otherwise, generate a new daily summary
-    const customers = getCustomers(merchantId, dateStr);
-    const merchantTransactions = (db.transactions || []).filter(t => (t.merchant_id || 'merchant_1') === merchantId);
-    const summaryText = await generateDailySummary(dateStr, merchantTransactions, customers);
+    const customers = getCustomers(merchantId, targetDate);
     
-    const todayTxs = merchantTransactions.filter(t => t.date.startsWith(dateStr));
+    // Safety fallback: if transaction lacks merchant_id, associate it by customer's merchant_id
+    const customerMap = new Map((db.customers || []).map(c => [c.id, c]));
+    const merchantTransactions = (db.transactions || []).filter(t => {
+      const txMerchantId = t.merchant_id || customerMap.get(t.customer_id)?.merchant_id || 'merchant_1';
+      return txMerchantId === merchantId;
+    });
+    
+    const summaryText = await generateDailySummary(targetDate, merchantTransactions, customers);
+    
+    // Timezone-aware date matching using getLocalDateStr
+    const todayTxs = merchantTransactions.filter(t => getLocalDateStr(t.date) === targetDate);
     const creditGiven = todayTxs.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount, 0);
     const collections = todayTxs.filter(t => t.type === 'collection').reduce((sum, t) => sum + t.amount, 0);
     const netChange = creditGiven - collections;
 
     const newSummary = {
-      date: dateStr,
+      date: targetDate,
       merchant_id: merchantId,
       credit_given: creditGiven,
       collections: collections,
@@ -344,6 +352,10 @@ app.get('/api/summary/daily', async (req, res) => {
       created_at: new Date().toISOString()
     };
 
+    // Clean up any stale summary for this date and merchant to avoid duplicates, then add
+    db.daily_summaries = (db.daily_summaries || []).filter(
+      s => !(s.date === targetDate && (s.merchant_id || 'merchant_1') === merchantId)
+    );
     db.daily_summaries.push(newSummary);
     writeDb(db);
 
