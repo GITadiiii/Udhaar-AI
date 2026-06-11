@@ -1,6 +1,8 @@
 import { Customer, Transaction, Reminder, DailySummary, Ledger } from '../types';
 
-const API_BASE = 'https://udhaar-ai.onrender.com/api';
+const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:5000/api'
+  : 'https://udhaar-ai.onrender.com/api';
 
 const getHeaders = (headers?: Record<string, string>) => {
   const merchantId = localStorage.getItem('udhaar_merchant_id') || 'merchant_1';

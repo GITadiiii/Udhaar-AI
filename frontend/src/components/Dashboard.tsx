@@ -33,13 +33,23 @@ const getAvatarBg = (name: string) => {
   return groups[charCode % groups.length];
 };
 
+const getLocalDateStr = (dateInput: string) => {
+  if (!dateInput) return '';
+  const dateObj = new Date(dateInput);
+  if (isNaN(dateObj.getTime())) return '';
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export default function Dashboard({ customers, transactions, reminders, onNavigate, merchantName, shopName, selectedDate }: DashboardProps) {
   // 1. Calculate stats dynamically
   const outstandingDebt = customers.reduce((sum, c) => sum + c.balance, 0);
   
   const todayStr = selectedDate;
 
-  const todayTransactions = transactions.filter(t => t.date.startsWith(todayStr));
+  const todayTransactions = transactions.filter(t => getLocalDateStr(t.date) === todayStr);
   
   const collectionsToday = todayTransactions
     .filter(t => t.type === 'collection')
@@ -64,7 +74,7 @@ export default function Dashboard({ customers, transactions, reminders, onNaviga
     
     const formattedLabel = d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
     
-    const dayTxs = transactions.filter(t => t.date.startsWith(dateStr));
+    const dayTxs = transactions.filter(t => getLocalDateStr(t.date) === dateStr);
     const credit = dayTxs.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount, 0);
     const collection = dayTxs.filter(t => t.type === 'collection').reduce((sum, t) => sum + t.amount, 0);
     

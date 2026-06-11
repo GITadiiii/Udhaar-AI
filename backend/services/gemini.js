@@ -389,7 +389,7 @@ export async function extractTransactionFromVoice(transcript, customers) {
 
   try {
     return await callWithGemini(async (genAI) => {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
       
       const customerListString = customers.map(c => 
         `ID: ${c.id}, Name: ${c.name}, Aliases: [${(c.aliases || []).join(', ')}]`
@@ -475,12 +475,24 @@ Return ONLY a JSON object matching this schema (no markdown wrapping, no backtic
   }
 }
 
+function getLocalDateStr(dateInput) {
+  if (!dateInput) return '';
+  const dateObj = new Date(dateInput);
+  if (isNaN(dateObj.getTime())) return '';
+  const offset = 5.5 * 60 * 60 * 1000; // IST offset
+  const istDate = new Date(dateObj.getTime() + offset);
+  const year = istDate.getUTCFullYear();
+  const month = String(istDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(istDate.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 /**
  * Generate a narrative business summary of the day's transactions
  */
 export async function generateDailySummary(dateStr, transactions, customers) {
   // Compute summary figures locally first
-  const todayTxs = transactions.filter(t => t.date.startsWith(dateStr));
+  const todayTxs = transactions.filter(t => getLocalDateStr(t.date) === dateStr);
   const creditGiven = todayTxs.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount, 0);
   const collections = todayTxs.filter(t => t.type === 'collection').reduce((sum, t) => sum + t.amount, 0);
   const netChange = creditGiven - collections;
@@ -508,7 +520,7 @@ Suggested action: Review pending reminders and send payment follow-ups today.`;
 
   try {
     return await callWithGemini(async (genAI) => {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
       
       const customerDetails = customers.map(c => `- ${c.name} (Balance: ₹${c.balance})`).join('\n');
       const txDetails = todayTxs.map(t => {
@@ -559,7 +571,7 @@ export async function resolveSemanticMatch(queryName, customers) {
 
   try {
     return await callWithGemini(async (genAI) => {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
       
       const customerListString = customers.map(c => 
         `ID: ${c.id}, Name: ${c.name}, Aliases: [${(c.aliases || []).join(', ')}]`
@@ -622,7 +634,7 @@ export async function getCanonicalName(name, customers) {
 
   try {
     return await callWithGemini(async (genAI) => {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
       const customerNames = customers.map(c => c.name).join(', ');
       
       const prompt = `
