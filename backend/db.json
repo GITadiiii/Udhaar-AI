@@ -356,7 +356,8 @@
         "raju"
       ],
       "phone": "+9199999840227",
-      "created_at": "2026-06-10T11:00:04.195Z"
+      "created_at": "2026-06-10T11:00:04.195Z",
+      "deleted": true
     },
     {
       "id": "cust_6545d368",
@@ -385,6 +386,20 @@
       ],
       "phone": null,
       "created_at": "2026-06-10T11:42:57.692Z"
+    },
+    {
+      "id": "cust_0ecf50cd",
+      "merchant_id": "merchant_09imaqdqz",
+      "name": "Raju",
+      "displayName": "Raju",
+      "alias": "Raju",
+      "normalizedName": "raju",
+      "aliases": [
+        "Raju",
+        "raju"
+      ],
+      "phone": null,
+      "created_at": "2026-06-11T19:33:39.049Z"
     }
   ],
   "transactions": [
@@ -731,6 +746,42 @@
       "type": "credit",
       "description": "Udhaar entry",
       "date": "2026-05-25T12:26:00.000Z"
+    },
+    {
+      "id": "tx_4a39d0e6",
+      "merchant_id": "merchant_09imaqdqz",
+      "customer_id": "cust_bc8d7ebd",
+      "amount": 8000,
+      "type": "collection",
+      "description": "Wapas received",
+      "date": "2026-06-11T19:29:00.000Z"
+    },
+    {
+      "id": "tx_e7d664c2",
+      "merchant_id": "merchant_09imaqdqz",
+      "customer_id": "cust_d75ede23",
+      "amount": 4000,
+      "type": "credit",
+      "description": "Udhaar entry",
+      "date": "2026-06-11T19:30:00.000Z"
+    },
+    {
+      "id": "tx_a7c8f42f",
+      "merchant_id": "merchant_09imaqdqz",
+      "customer_id": "cust_0ecf50cd",
+      "amount": 500,
+      "type": "credit",
+      "description": "Voice: \"राजू को 500 दिया\"",
+      "date": "2026-06-11T19:33:39.067Z"
+    },
+    {
+      "id": "tx_db5b10b5",
+      "merchant_id": "merchant_09imaqdqz",
+      "customer_id": "cust_bc8d7ebd",
+      "amount": 3000,
+      "type": "credit",
+      "description": "Udhaar entry",
+      "date": "2026-06-10T19:36:00.000Z"
     }
   ],
   "outstanding_balances": [
@@ -792,14 +843,14 @@
     {
       "customer_id": "cust_bc8d7ebd",
       "merchant_id": "merchant_09imaqdqz",
-      "balance": 13700,
-      "last_updated": "2026-05-25T12:26:00.000Z"
+      "balance": 8700,
+      "last_updated": "2026-06-10T19:36:00.000Z"
     },
     {
       "customer_id": "cust_d75ede23",
       "merchant_id": "merchant_09imaqdqz",
-      "balance": 2000,
-      "last_updated": "2026-06-09T20:18:12.940Z"
+      "balance": 6000,
+      "last_updated": "2026-06-11T19:30:00.000Z"
     },
     {
       "customer_id": "cust_2e95a92c",
@@ -820,12 +871,6 @@
       "last_updated": "2026-06-09T12:19:00.000Z"
     },
     {
-      "customer_id": "cust_b739ddfb",
-      "merchant_id": "merchant_09imaqdqz",
-      "balance": 0,
-      "last_updated": "2026-06-10T11:00:04.195Z"
-    },
-    {
       "customer_id": "cust_6545d368",
       "merchant_id": "merchant_09imaqdqz",
       "balance": 200,
@@ -836,6 +881,12 @@
       "merchant_id": "merchant_09imaqdqz",
       "balance": 1000,
       "last_updated": "2026-06-10T11:42:00.000Z"
+    },
+    {
+      "customer_id": "cust_0ecf50cd",
+      "merchant_id": "merchant_09imaqdqz",
+      "balance": 500,
+      "last_updated": "2026-06-11T19:33:39.067Z"
     }
   ],
   "reminders": [
@@ -1065,42 +1116,6 @@
       "created_at": "2026-06-09T19:05:52.861Z"
     },
     {
-      "id": "rem_ba879dfe",
-      "merchant_id": "merchant_09imaqdqz",
-      "customer_id": "cust_d75ede23",
-      "amount": 2000,
-      "due_date": "2026-06-11T20:18:12.940Z",
-      "days_overdue": 0,
-      "priority": "Soft",
-      "status": "pending",
-      "customer_name": "Prateek",
-      "customer_phone": "+9199999328713"
-    },
-    {
-      "id": "rem_cbe7037b",
-      "merchant_id": "merchant_09imaqdqz",
-      "customer_id": "cust_d75ede23",
-      "amount": 2000,
-      "due_date": "2026-06-14T20:18:12.940Z",
-      "days_overdue": 0,
-      "priority": "Soft",
-      "status": "pending",
-      "customer_name": "Prateek",
-      "customer_phone": "+9199999328713"
-    },
-    {
-      "id": "rem_bba31ad9",
-      "merchant_id": "merchant_09imaqdqz",
-      "customer_id": "cust_d75ede23",
-      "amount": 2000,
-      "due_date": "2026-06-19T20:18:12.940Z",
-      "days_overdue": 0,
-      "priority": "Soft",
-      "status": "pending",
-      "customer_name": "Prateek",
-      "customer_phone": "+9199999328713"
-    },
-    {
       "id": "rem_99e2a8bf",
       "merchant_id": "merchant_09imaqdqz",
       "customer_id": "cust_2e95a92c",
@@ -1235,17 +1250,43 @@
       "created_at": "2026-06-10T12:18:14.392Z"
     },
     {
-      "id": "rem_d056ed29",
+      "id": "rem_3888d90d",
+      "merchant_id": "merchant_09imaqdqz",
+      "customer_id": "cust_d75ede23",
+      "customer_name": "Prateek",
+      "customer_phone": "+9199999328713",
+      "amount": 6000,
+      "priority": "Soft",
+      "status": "pending",
+      "days_overdue": 2,
+      "due_date": "2026-06-09T20:17:52.647Z",
+      "created_at": "2026-06-11T19:30:18.417Z"
+    },
+    {
+      "id": "rem_09454a1f",
+      "merchant_id": "merchant_09imaqdqz",
+      "customer_id": "cust_0ecf50cd",
+      "customer_name": "Raju",
+      "customer_phone": null,
+      "amount": 500,
+      "priority": "Soft",
+      "status": "pending",
+      "days_overdue": 0,
+      "due_date": "2026-06-11T19:33:39.067Z",
+      "created_at": "2026-06-11T19:33:39.068Z"
+    },
+    {
+      "id": "rem_31a4149d",
       "merchant_id": "merchant_09imaqdqz",
       "customer_id": "cust_bc8d7ebd",
       "customer_name": "Aditi Sinha",
       "customer_phone": "9304118799",
-      "amount": 13700,
+      "amount": 8700,
       "priority": "High",
       "status": "pending",
-      "days_overdue": 16,
+      "days_overdue": 18,
       "due_date": "2026-05-25T12:26:00.000Z",
-      "created_at": "2026-06-10T12:26:46.174Z"
+      "created_at": "2026-06-11T19:36:18.769Z"
     }
   ],
   "daily_summaries": [
@@ -1272,51 +1313,6 @@
       "net_change": 1200,
       "summary_text": "Today's Business Summary (Local Engine):\nYou gave ₹1500 in credit today and collected ₹300.\nOutstanding debt changed by ₹+1200.\nThere are 9 customer(s) with outstanding dues.\nHighest outstanding debtor is Sanskriti (₹3200).\nSuggested action: Review pending reminders and send payment follow-ups today.",
       "created_at": "2026-06-09T14:09:23.795Z"
-    },
-    {
-      "date": "2026-06-09",
-      "merchant_id": "merchant_09imaqdqz",
-      "credit_given": 0,
-      "collections": 0,
-      "net_change": 0,
-      "summary_text": "Today's Business Summary (Local Engine):\nYou gave ₹0 in credit today and collected ₹0.\nOutstanding debt changed by ₹+0.\nThere are 0 customer(s) with outstanding dues.\nHighest outstanding debtor is None.\nSuggested action: Review pending reminders and send payment follow-ups today.",
-      "created_at": "2026-06-09T20:09:30.767Z"
-    },
-    {
-      "date": "2026-06-08",
-      "merchant_id": "merchant_09imaqdqz",
-      "credit_given": 0,
-      "collections": 0,
-      "net_change": 0,
-      "summary_text": "Today's Business Summary (Local Engine):\nYou gave ₹0 in credit today and collected ₹0.\nOutstanding debt changed by ₹+0.\nThere are 7 customer(s) with outstanding dues.\nHighest outstanding debtor is Aditi Sinha (₹13700).\nSuggested action: Review pending reminders and send payment follow-ups today.",
-      "created_at": "2026-06-10T12:30:43.297Z"
-    },
-    {
-      "date": "2026-06-04",
-      "merchant_id": "merchant_09imaqdqz",
-      "credit_given": 0,
-      "collections": 0,
-      "net_change": 0,
-      "summary_text": "Today's Business Summary (Local Engine):\nYou gave ₹0 in credit today and collected ₹0.\nOutstanding debt changed by ₹+0.\nThere are 7 customer(s) with outstanding dues.\nHighest outstanding debtor is Aditi Sinha (₹13700).\nSuggested action: Review pending reminders and send payment follow-ups today.",
-      "created_at": "2026-06-10T12:33:32.855Z"
-    },
-    {
-      "date": "2026-06-10",
-      "merchant_id": "merchant_09imaqdqz",
-      "credit_given": 4100,
-      "collections": 400,
-      "net_change": 3700,
-      "summary_text": "Today's Business Summary (Local Engine):\nYou gave ₹4100 in credit today and collected ₹400.\nOutstanding debt changed by ₹+3700.\nThere are 7 customer(s) with outstanding dues.\nHighest outstanding debtor is Aditi Sinha (₹13700).\nSuggested action: Review pending reminders and send payment follow-ups today.",
-      "created_at": "2026-06-10T12:57:32.639Z"
-    },
-    {
-      "date": "2026-05-12",
-      "merchant_id": "merchant_09imaqdqz",
-      "credit_given": 0,
-      "collections": 0,
-      "net_change": 0,
-      "summary_text": "Today's Business Summary (Local Engine):\nYou gave ₹0 in credit today and collected ₹0.\nOutstanding debt changed by ₹+0.\nThere are 0 customer(s) with outstanding dues.\nHighest outstanding debtor is None.\nSuggested action: Review pending reminders and send payment follow-ups today.",
-      "created_at": "2026-06-10T12:57:53.271Z"
     }
   ]
 }
