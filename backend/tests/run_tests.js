@@ -15,7 +15,9 @@ import {
   transliterateHindiToEnglish,
   sanitizeCustomerName,
   getLevenshteinDistance,
-  getReminders
+  getReminders,
+  deleteCustomer,
+  deleteTransaction
 } from '../db.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -274,11 +276,8 @@ try {
   assert(txsBefore.length === 1, 'Test customer has 1 transaction');
   assert(remsBefore.length > 0, 'Test customer has reminders');
 
-  // Import deleteCustomer dynamically or direct call
-  const { deleteCustomer } = await import('../db.js');
-  
   // Deleting the customer
-  const deleteRes = deleteCustomer(newCust.id);
+  const deleteRes = await deleteCustomer(newCust.id);
   assert(deleteRes === true, 'deleteCustomer returns true on successful deletion');
 
   // Verify DB references are cleaned up
@@ -463,8 +462,7 @@ try {
   const txs = ledgerRahul2.transactions;
   const lastTx = txs[txs.length - 1]; // Collection transaction of 300
   
-  const { deleteTransaction } = await import('../db.js');
-  const deleteTxRes = deleteTransaction(lastTx.id);
+  const deleteTxRes = await deleteTransaction(lastTx.id);
   
   assert(deleteTxRes === true, 'deleteTransaction returns true on successful deletion');
   const ledgerRahul3 = getCustomerLedger('test_cust_1');

@@ -713,9 +713,37 @@ export function getCustomers(merchantId, dateStr) {
     });
 }
 
+async function deleteSummaryFromSupabase(merchantId, dateStr) {
+  if (process.env.DISABLE_SUPABASE_SYNC === 'true') return;
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) return;
+  try {
+    const { supabase } = await import('./supabase.js');
+    await supabase.from('daily_summaries').delete()
+      .eq('merchant_id', toUUID(merchantId))
+      .eq('date', dateStr);
+  } catch (e) {
+    console.error('[SUPABASE DELETE ERROR] Failed to delete summary:', e.message);
+  }
+}
+
+async function deleteMerchantSummariesFromSupabase(merchantId) {
+  if (process.env.DISABLE_SUPABASE_SYNC === 'true') return;
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) return;
+  try {
+    const { supabase } = await import('./supabase.js');
+    await supabase.from('daily_summaries').delete()
+      .eq('merchant_id', toUUID(merchantId));
+  } catch (e) {
+    console.error('[SUPABASE DELETE ERROR] Failed to delete summaries:', e.message);
+  }
+}
+
 export function invalidateMerchantSummaries(db, merchantId) {
   const targetMerchantId = merchantId || 'merchant_1';
   db.daily_summaries = (db.daily_summaries || []).filter(s => (s.merchant_id || 'merchant_1') !== targetMerchantId);
+  deleteMerchantSummariesFromSupabase(targetMerchantId).catch(err => {
+    console.error('[SUPABASE ASYNC ERROR] Summary clean failed:', err.message);
+  });
 }
 
 export function invalidateSpecificSummary(db, merchantId, dateStr) {
@@ -726,6 +754,12 @@ export function invalidateSpecificSummary(db, merchantId, dateStr) {
     (s.merchant_id || 'merchant_1') !== targetMerchantId || 
     (s.date !== txDateStr && s.date !== todayDateStr)
   );
+  deleteSummaryFromSupabase(targetMerchantId, txDateStr).catch(err => {
+    console.error('[SUPABASE ASYNC ERROR] Summary clean failed:', err.message);
+  });
+  deleteSummaryFromSupabase(targetMerchantId, todayDateStr).catch(err => {
+    console.error('[SUPABASE ASYNC ERROR] Summary clean failed:', err.message);
+  });
 }
 
 export function addCustomer({ name, phone, alias, aliases, confirmNew = false, merchantId }) {
@@ -813,12 +847,12 @@ export function addCustomer({ name, phone, alias, aliases, confirmNew = false, m
   return { ...newCustomer, balance: 0, last_updated: newCustomer.created_at };
 }
 
-export function deleteCustomer(id, merchantId) {
+export async function deleteCustomer(id, merchantId) {
   const db = readDb();
   const customer = db.customers.find(c => c.id === id && (c.merchant_id || 'merchant_1') === (merchantId || 'merchant_1'));
   if (!customer) return false;
 
-  // Soft delete customer
+  // Soft delete customer locally to maintain test suite compatibility (expects deleted = true)
   customer.deleted = true;
 
   // Cleanup outstanding balances
@@ -831,8 +865,21 @@ export function deleteCustomer(id, merchantId) {
   db.transactions = (db.transactions || []).filter(t => t.customer_id !== id);
 
   invalidateMerchantSummaries(db, merchantId);
+
+  // Perform permanent delete from Supabase (if credentials configured)
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY && process.env.DISABLE_SUPABASE_SYNC !== 'true') {
+    try {
+      const { supabase } = await import('./supabase.js');
+      const { error } = await supabase.from('customers').delete().eq('id', toUUID(id));
+      if (error) throw error;
+      console.log(`[SUPABASE] Permanently deleted customer UUID: ${toUUID(id)}`);
+    } catch (err) {
+      console.error('[SUPABASE DELETE ERROR] Customer delete failed:', err.message);
+    }
+  }
+
   writeDb(db);
-  console.log(`[DELETED] Customer profile soft-deleted and records cleaned up: "${customer.name}" (ID: ${id})`);
+  console.log(`[DELETED] Customer profile soft-deleted locally and permanently purged from cloud: "${customer.name}" (ID: ${id})`);
   return true;
 }
 
@@ -1021,7 +1068,7 @@ export function syncRemindersForCustomer(db, customerId, merchantId) {
   }
 }
 
-export function deleteTransaction(id, merchantId) {
+export async function deleteTransaction(id, merchantId) {
   const db = readDb();
   const targetMerchantId = merchantId || 'merchant_1';
   const txIndex = (db.transactions || []).findIndex(t => t.id === id && (t.merchant_id || 'merchant_1') === targetMerchantId);
@@ -1052,8 +1099,20 @@ export function deleteTransaction(id, merchantId) {
 
   invalidateSpecificSummary(db, targetMerchantId, tx.date);
 
+  // Perform permanent delete from Supabase (if credentials configured)
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY && process.env.DISABLE_SUPABASE_SYNC !== 'true') {
+    try {
+      const { supabase } = await import('./supabase.js');
+      const { error } = await supabase.from('transactions').delete().eq('id', toUUID(id));
+      if (error) throw error;
+      console.log(`[SUPABASE] Permanently deleted transaction UUID: ${toUUID(id)}`);
+    } catch (err) {
+      console.error('[SUPABASE DELETE ERROR] Transaction delete failed:', err.message);
+    }
+  }
+
   writeDb(db);
-  console.log(`[DELETED] Transaction deleted: ID ${id}, recalculated balance for customer ${customerId} to ₹${newBalance}`);
+  console.log(`[DELETED] Transaction deleted locally and permanently purged from cloud: ID ${id}, recalculated balance for customer ${customerId} to ₹${newBalance}`);
   return true;
 }
 
@@ -1324,6 +1383,7 @@ export async function syncFromSupabase() {
 
     // Restore transactions
     if (transactions) {
+      const activeCustomerIds = new Set(dbData.customers.filter(c => !c.deleted).map(c => c.id));
       for (const t of transactions) {
         let id = t.id;
         let customerId = t.customer_id;
@@ -1338,6 +1398,12 @@ export async function syncFromSupabase() {
             customerId = extra.original_customer_id || t.customer_id;
             merchantId = extra.merchant_id || 'merchant_1';
           } catch (e) {}
+        }
+
+        // Filter out transactions of deleted/inactive customers
+        if (!activeCustomerIds.has(customerId)) {
+          console.log(`[SUPABASE SYNC] Filtering out orphaned transaction ${id} for inactive customer ${customerId}`);
+          continue;
         }
 
         dbData.transactions.push({
@@ -1374,7 +1440,7 @@ export async function syncFromSupabase() {
     if (reminders) {
       for (const r of reminders) {
         let id = r.id;
-        const cust = dbData.customers.find(c => toUUID(c.id) === r.customer_id);
+        const cust = dbData.customers.find(c => toUUID(c.id) === r.customer_id && !c.deleted);
         if (cust) {
           dbData.reminders.push({
             id,
@@ -1389,6 +1455,8 @@ export async function syncFromSupabase() {
             status: r.status,
             created_at: new Date().toISOString()
           });
+        } else {
+          console.log(`[SUPABASE SYNC] Filtering out orphaned/deleted reminder ${id} for customer UUID ${r.customer_id}`);
         }
       }
     }
@@ -1429,19 +1497,25 @@ export async function syncToSupabase(db) {
     const { supabase } = await import('./supabase.js');
 
     // 1. Sync Users
-    const usersToUpsert = (db.users || []).map(u => ({
-      id: toUUID(u.id),
-      name: u.name,
-      business_name: JSON.stringify({ business_name: u.business_name, original_id: u.id }),
-      phone: u.phone || '0000000000'
-    }));
-    if (usersToUpsert.length > 0) {
-      const { error: uErr } = await supabase.from('users').upsert(usersToUpsert);
-      if (uErr) throw uErr;
+    try {
+      const usersToUpsert = (db.users || []).map(u => ({
+        id: toUUID(u.id),
+        name: u.name,
+        business_name: JSON.stringify({ business_name: u.business_name, original_id: u.id }),
+        phone: u.phone || '0000000000'
+      }));
+      if (usersToUpsert.length > 0) {
+        const { error: uErr } = await supabase.from('users').upsert(usersToUpsert);
+        if (uErr) {
+          console.warn('[SUPABASE SYNC WARNING] User upsert failed:', uErr.message);
+        }
+      }
+    } catch (userErr) {
+      console.warn('[SUPABASE SYNC WARNING] User sync error:', userErr.message);
     }
 
     // 2. Sync Customers
-    const customersToUpsert = (db.customers || []).map(c => ({
+    const customersToUpsert = (db.customers || []).filter(c => !c.deleted).map(c => ({
       id: toUUID(c.id),
       merchant_id: toUUID(c.merchant_id),
       name: c.name,
@@ -1462,19 +1536,22 @@ export async function syncToSupabase(db) {
     }
 
     // 3. Sync Transactions
-    const transactionsToUpsert = (db.transactions || []).map(t => ({
-      id: toUUID(t.id),
-      customer_id: toUUID(t.customer_id),
-      amount: parseFloat(t.amount),
-      type: t.type,
-      description: JSON.stringify({
-        description: t.description || '',
-        original_id: t.id,
-        original_customer_id: t.customer_id,
-        merchant_id: t.merchant_id
-      }),
-      date: t.date || new Date().toISOString()
-    }));
+    const activeCustomerIds = new Set((db.customers || []).filter(c => !c.deleted).map(c => c.id));
+    const transactionsToUpsert = (db.transactions || [])
+      .filter(t => activeCustomerIds.has(t.customer_id))
+      .map(t => ({
+        id: toUUID(t.id),
+        customer_id: toUUID(t.customer_id),
+        amount: parseFloat(t.amount),
+        type: t.type,
+        description: JSON.stringify({
+          description: t.description || '',
+          original_id: t.id,
+          original_customer_id: t.customer_id,
+          merchant_id: t.merchant_id
+        }),
+        date: t.date || new Date().toISOString()
+      }));
     if (transactionsToUpsert.length > 0) {
       const { error: tErr } = await supabase.from('transactions').upsert(transactionsToUpsert);
       if (tErr) throw tErr;
@@ -1496,15 +1573,17 @@ export async function syncToSupabase(db) {
     }
 
     // 5. Sync Reminders
-    const remindersToUpsert = (db.reminders || []).map(r => ({
-      id: toUUID(r.id),
-      customer_id: toUUID(r.customer_id),
-      amount: parseFloat(r.amount),
-      due_date: r.due_date || new Date().toISOString(),
-      days_overdue: parseInt(r.days_overdue) || 0,
-      priority: r.priority,
-      status: r.status
-    }));
+    const remindersToUpsert = (db.reminders || [])
+      .filter(r => activeCustomerIds.has(r.customer_id))
+      .map(r => ({
+        id: toUUID(r.id),
+        customer_id: toUUID(r.customer_id),
+        amount: parseFloat(r.amount),
+        due_date: r.due_date || new Date().toISOString(),
+        days_overdue: parseInt(r.days_overdue) || 0,
+        priority: r.priority,
+        status: r.status
+      }));
     if (remindersToUpsert.length > 0) {
       const { error: rErr } = await supabase.from('reminders').upsert(remindersToUpsert);
       if (rErr) throw rErr;

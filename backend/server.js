@@ -195,11 +195,11 @@ app.put('/api/customers/:id', (req, res) => {
 });
 
 // Delete Customer (and cleanup associated records)
-app.delete('/api/customers/:id', (req, res) => {
+app.delete('/api/customers/:id', async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
     const { id } = req.params;
-    const success = deleteCustomer(id, merchantId);
+    const success = await deleteCustomer(id, merchantId);
     if (!success) {
       return res.status(404).json({ error: 'Customer not found' });
     }
@@ -215,7 +215,7 @@ app.delete('/api/transactions/:id', async (req, res) => {
     const merchantId = getMerchantId(req);
     const { id } = req.params;
     const { deleteTransaction } = await import('./db.js');
-    const success = deleteTransaction(id, merchantId);
+    const success = await deleteTransaction(id, merchantId);
     if (!success) {
       return res.status(404).json({ error: 'Transaction not found' });
     }
