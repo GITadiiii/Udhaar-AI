@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { supabase } from './supabase.js';
 import { 
   getCustomers, 
   addCustomer, 
@@ -46,6 +47,21 @@ const getMerchantId = (req) => {
 };
 
 const app = express();
+app.get('/api/test-supabase', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*');
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({
+      error: err.message
+    });
+  }
+});
 const PORT = process.env.PORT || 5000;
 
 app.use(cors({
