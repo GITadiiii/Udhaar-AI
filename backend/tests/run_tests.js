@@ -1,3 +1,4 @@
+process.env.DISABLE_SUPABASE_SYNC = 'true';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,6 +34,9 @@ export function readDb() {
 export function writeDb(data) {
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    syncToSupabase(data).catch(err => {
+      console.error('[SUPABASE ASYNC ERROR] Background sync failure:', err.message);
+    });
     return true;
   } catch (error) {
     console.error('Error writing to database file:', error);
@@ -1206,4 +1210,308 @@ export function getReminders(merchantId, dateStr) {
   }
 
   return remindersList;
+}
+
+function toUUID(id) {
+  if (!id) return null;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(id)) return id;
+  const hash = crypto.createHash('sha256').update(id).digest('hex');
+  return [
+    hash.substring(0, 8),
+    hash.substring(8, 12),
+    '4' + hash.substring(13, 16),
+    'a' + hash.substring(17, 20),
+    hash.substring(20, 32)
+  ].join('-');
+}
+
+export async function syncFromSupabase() {
+  if (process.env.DISABLE_SUPABASE_SYNC === 'true') {
+    console.log('[SUPABASE SYNC] Bypassed in test environment');
+    return;
+  }
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    console.log('[SUPABASE SYNC] Disabled: Missing credentials in environment');
+    return;
+  }
+
+  try {
+    console.log('[SUPABASE SYNC] Fetching remote state from Supabase...');
+    const { supabase } = await import('./supabase.js');
+
+    const { data: users, error: uErr } = await supabase.from('users').select('*');
+    if (uErr) throw uErr;
+
+    const { data: customers, error: cErr } = await supabase.from('customers').select('*');
+    if (cErr) throw cErr;
+
+    const { data: transactions, error: tErr } = await supabase.from('transactions').select('*');
+    if (tErr) throw tErr;
+
+    const { data: summaries, error: sErr } = await supabase.from('daily_summaries').select('*');
+    if (sErr) throw sErr;
+
+    const { data: reminders, error: rErr } = await supabase.from('reminders').select('*');
+    if (rErr) throw rErr;
+
+    const dbData = {
+      users: [],
+      customers: [],
+      transactions: [],
+      outstanding_balances: [],
+      reminders: [],
+      daily_summaries: []
+    };
+
+    // Restore users
+    if (users) {
+      for (const u of users) {
+        let id = u.id;
+        let businessName = u.business_name;
+        if (u.business_name && u.business_name.startsWith('{') && u.business_name.endsWith('}')) {
+          try {
+            const extra = JSON.parse(u.business_name);
+            id = extra.original_id || u.id;
+            businessName = extra.business_name || u.business_name;
+          } catch (e) {}
+        }
+        dbData.users.push({
+          id,
+          name: u.name,
+          business_name: businessName,
+          phone: u.phone
+        });
+      }
+    }
+
+    // Restore customers
+    if (customers) {
+      for (const c of customers) {
+        let alias = c.alias;
+        let aliases = [c.name];
+        let normalizedName = c.name.toLowerCase().replace(/\s+/g, '');
+        let deleted = false;
+        let id = c.id;
+        let merchantId = c.merchant_id;
+
+        if (c.alias && c.alias.startsWith('{') && c.alias.endsWith('}')) {
+          try {
+            const extra = JSON.parse(c.alias);
+            alias = extra.alias || c.alias;
+            aliases = extra.aliases || aliases;
+            normalizedName = extra.normalizedName || normalizedName;
+            deleted = extra.deleted || false;
+            id = extra.original_id || c.id;
+            merchantId = extra.original_merchant_id || c.merchant_id;
+          } catch (e) {}
+        }
+
+        dbData.customers.push({
+          id,
+          merchant_id: merchantId,
+          name: c.name,
+          displayName: c.name,
+          alias,
+          phone: c.phone === '0000000000' ? null : c.phone,
+          created_at: c.created_at,
+          normalizedName,
+          aliases,
+          deleted
+        });
+      }
+    }
+
+    // Restore transactions
+    if (transactions) {
+      for (const t of transactions) {
+        let id = t.id;
+        let customerId = t.customer_id;
+        let description = t.description;
+        let merchantId = 'merchant_1';
+
+        if (t.description && t.description.startsWith('{') && t.description.endsWith('}')) {
+          try {
+            const extra = JSON.parse(t.description);
+            description = extra.description || t.description;
+            id = extra.original_id || t.id;
+            customerId = extra.original_customer_id || t.customer_id;
+            merchantId = extra.merchant_id || 'merchant_1';
+          } catch (e) {}
+        }
+
+        dbData.transactions.push({
+          id,
+          merchant_id: merchantId,
+          customer_id: customerId,
+          amount: parseFloat(t.amount),
+          type: t.type,
+          description,
+          date: t.date
+        });
+      }
+    }
+
+    // Restore daily summaries
+    if (summaries) {
+      for (const s of summaries) {
+        const user = dbData.users.find(u => toUUID(u.id) === s.merchant_id);
+        const merchantId = user ? user.id : 'merchant_1';
+
+        dbData.daily_summaries.push({
+          date: s.date,
+          merchant_id: merchantId,
+          credit_given: parseFloat(s.credit_given),
+          collections: parseFloat(s.collections),
+          net_change: parseFloat(s.net_change),
+          summary_text: s.summary_text,
+          created_at: s.created_at
+        });
+      }
+    }
+
+    // Restore reminders
+    if (reminders) {
+      for (const r of reminders) {
+        let id = r.id;
+        const cust = dbData.customers.find(c => toUUID(c.id) === r.customer_id);
+        if (cust) {
+          dbData.reminders.push({
+            id,
+            merchant_id: cust.merchant_id,
+            customer_id: cust.id,
+            customer_name: cust.name,
+            customer_phone: cust.phone || '',
+            amount: parseFloat(r.amount),
+            due_date: r.due_date,
+            days_overdue: r.days_overdue,
+            priority: r.priority,
+            status: r.status,
+            created_at: new Date().toISOString()
+          });
+        }
+      }
+    }
+
+    // Recalculate outstanding balances for consistency
+    const activeCustomers = dbData.customers.filter(c => !c.deleted);
+    for (const c of activeCustomers) {
+      const custTxs = dbData.transactions.filter(t => t.customer_id === c.id);
+      const balance = custTxs.reduce((sum, t) => {
+        if (t.type === 'credit') return sum + parseFloat(t.amount);
+        return Math.max(0, sum - parseFloat(t.amount));
+      }, 0);
+      
+      const lastTx = custTxs.length > 0 
+        ? [...custTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0] 
+        : null;
+
+      dbData.outstanding_balances.push({
+        customer_id: c.id,
+        merchant_id: c.merchant_id,
+        balance,
+        last_updated: lastTx ? lastTx.date : c.created_at
+      });
+    }
+
+    fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), 'utf-8');
+    console.log(`[SUPABASE SYNC] Successfully loaded cloud state into local db.json.`);
+  } catch (err) {
+    console.error('[SUPABASE SYNC ERROR] Initial sync failed:', err.message);
+  }
+}
+
+export async function syncToSupabase(db) {
+  if (process.env.DISABLE_SUPABASE_SYNC === 'true') return;
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) return;
+
+  try {
+    const { supabase } = await import('./supabase.js');
+
+    // 1. Sync Users
+    const usersToUpsert = (db.users || []).map(u => ({
+      id: toUUID(u.id),
+      name: u.name,
+      business_name: JSON.stringify({ business_name: u.business_name, original_id: u.id }),
+      phone: u.phone || '0000000000'
+    }));
+    if (usersToUpsert.length > 0) {
+      const { error: uErr } = await supabase.from('users').upsert(usersToUpsert);
+      if (uErr) throw uErr;
+    }
+
+    // 2. Sync Customers
+    const customersToUpsert = (db.customers || []).map(c => ({
+      id: toUUID(c.id),
+      merchant_id: toUUID(c.merchant_id),
+      name: c.name,
+      alias: JSON.stringify({
+        alias: c.alias,
+        aliases: c.aliases,
+        normalizedName: c.normalizedName,
+        deleted: c.deleted || false,
+        original_id: c.id,
+        original_merchant_id: c.merchant_id
+      }),
+      phone: c.phone || '0000000000',
+      created_at: c.created_at || new Date().toISOString()
+    }));
+    if (customersToUpsert.length > 0) {
+      const { error: cErr } = await supabase.from('customers').upsert(customersToUpsert);
+      if (cErr) throw cErr;
+    }
+
+    // 3. Sync Transactions
+    const transactionsToUpsert = (db.transactions || []).map(t => ({
+      id: toUUID(t.id),
+      customer_id: toUUID(t.customer_id),
+      amount: parseFloat(t.amount),
+      type: t.type,
+      description: JSON.stringify({
+        description: t.description || '',
+        original_id: t.id,
+        original_customer_id: t.customer_id,
+        merchant_id: t.merchant_id
+      }),
+      date: t.date || new Date().toISOString()
+    }));
+    if (transactionsToUpsert.length > 0) {
+      const { error: tErr } = await supabase.from('transactions').upsert(transactionsToUpsert);
+      if (tErr) throw tErr;
+    }
+
+    // 4. Sync Daily Summaries
+    const summariesToUpsert = (db.daily_summaries || []).map(s => ({
+      merchant_id: toUUID(s.merchant_id),
+      date: s.date,
+      credit_given: parseFloat(s.credit_given),
+      collections: parseFloat(s.collections),
+      net_change: parseFloat(s.net_change),
+      summary_text: s.summary_text,
+      created_at: s.created_at || new Date().toISOString()
+    }));
+    if (summariesToUpsert.length > 0) {
+      const { error: sErr } = await supabase.from('daily_summaries').upsert(summariesToUpsert);
+      if (sErr) throw sErr;
+    }
+
+    // 5. Sync Reminders
+    const remindersToUpsert = (db.reminders || []).map(r => ({
+      id: toUUID(r.id),
+      customer_id: toUUID(r.customer_id),
+      amount: parseFloat(r.amount),
+      due_date: r.due_date || new Date().toISOString(),
+      days_overdue: parseInt(r.days_overdue) || 0,
+      priority: r.priority,
+      status: r.status
+    }));
+    if (remindersToUpsert.length > 0) {
+      const { error: rErr } = await supabase.from('reminders').upsert(remindersToUpsert);
+      if (rErr) throw rErr;
+    }
+
+    console.log('[SUPABASE SYNC] Successfully updated cloud state on Supabase.');
+  } catch (err) {
+    console.error('[SUPABASE SYNC ERROR] Failed to upsert state:', err.message);
+  }
 }

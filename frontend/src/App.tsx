@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { fetchCustomers, fetchReminders, createCustomer, deleteCustomer, updateCustomer } from './utils/api';
+import { fetchCustomers, fetchReminders, createCustomer, deleteCustomer, updateCustomer, fetchLedger } from './utils/api';
 import { Customer, Reminder, Transaction } from './types';
 import Dashboard from './components/Dashboard';
 import Customers from './components/Customers';
@@ -116,13 +116,11 @@ export default function App() {
       // Rebuild client transaction list from ledgers
       const allTxs: Transaction[] = [];
       for (const cust of custData) {
-        // Fetch detailed ledger to compile full transaction records for trends
-        const res = await fetch(`/api/customers/${cust.id}/ledger?date=${targetDate}`, {
-          headers: { 'x-merchant-id': localStorage.getItem('udhaar_merchant_id') || 'merchant_1' }
-        });
-        if (res.ok) {
-          const ledger = await res.json();
+        try {
+          const ledger = await fetchLedger(cust.id, targetDate);
           allTxs.push(...ledger.transactions);
+        } catch (e) {
+          console.error(`Failed to fetch ledger for customer ${cust.id}:`, e);
         }
       }
       setTransactions(allTxs);

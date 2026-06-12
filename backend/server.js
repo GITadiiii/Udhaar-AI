@@ -17,7 +17,8 @@ import {
   updateCustomer,
   getLevenshteinDistance,
   getLocalDateStr,
-  getTodayStr
+  getTodayStr,
+  syncFromSupabase
 } from './db.js';
 import { 
   extractTransactionFromVoice, 
@@ -278,7 +279,12 @@ app.post('/api/voice/process', async (req, res) => {
         const extPhone = extracted.phone ? extracted.phone.replace(/\D/g, '') : '';
         const phoneMatch = matchPhone && extPhone && matchPhone.endsWith(extPhone.slice(-10));
         
-        if (phoneMatch || isConfidentMatch(matchName, extracted.canonicalName) || isConfidentMatch(matchName, extracted.name)) {
+        const hasAliasMatch = (match.aliases || []).some(
+          a => a.toLowerCase() === (extracted.canonicalName || '').toLowerCase() ||
+               a.toLowerCase() === (extracted.name || '').toLowerCase()
+        );
+        
+        if (phoneMatch || hasAliasMatch || isConfidentMatch(matchName, extracted.canonicalName) || isConfidentMatch(matchName, extracted.name)) {
           console.log(`[MATCHED] Voice transaction uniquely matched customer: "${match.name}" (ID: ${match.id})`);
           
           const { learnAlias } = await import('./db.js');
@@ -394,8 +400,10 @@ app.get('/api/reminders', (req, res) => {
 });
 
 // Start Server
-mergeDuplicateCustomers();
-
-app.listen(PORT, () => {
-  console.log(`Express server running on http://localhost:${PORT}`);
+syncFromSupabase().then(() => {
+  mergeDuplicateCustomers();
+  
+  app.listen(PORT, () => {
+    console.log(`Express server running on http://localhost:${PORT}`);
+  });
 });

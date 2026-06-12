@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Ledger, Transaction } from '../types';
-import { fetchLedger, createTransaction } from '../utils/api';
+import { fetchLedger, createTransaction, deleteTransaction } from '../utils/api';
 import { ArrowLeft, Phone, Calendar, ArrowUpRight, ArrowDownLeft, AlertCircle, Share2, Clipboard, MessageSquare, Plus, PlusCircle, CheckCircle, Trash2, X, AlertTriangle } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -185,19 +185,12 @@ export default function CustomerLedger({ customerId, onBack, onBalanceChange, on
     if (!transactionToDelete) return;
     setDeletingTx(true);
     try {
-      const res = await fetch(`/api/transactions/${transactionToDelete.id}`, {
-        method: 'DELETE',
-        headers: { 'x-merchant-id': localStorage.getItem('udhaar_merchant_id') || 'merchant_1' }
-      });
-      if (res.ok) {
-        setTransactionToDelete(null);
-        await loadLedger();
-        onBalanceChange();
-        setSuccessMsg('Transaction deleted successfully!');
-        setTimeout(() => setSuccessMsg(''), 3000);
-      } else {
-        alert('Failed to delete transaction');
-      }
+      await deleteTransaction(transactionToDelete.id);
+      setTransactionToDelete(null);
+      await loadLedger();
+      onBalanceChange();
+      setSuccessMsg('Transaction deleted successfully!');
+      setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err) {
       console.error(err);
       alert('Error deleting transaction');

@@ -70,7 +70,7 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
   const handleOpenEdit = (customer: Customer) => {
     setCustomerToEdit(customer);
     setEditName(customer.name);
-    setEditPhone(customer.phone);
+    setEditPhone(customer.phone || '');
     setEditAlias(customer.alias || '');
     setEditAddress(customer.address || '');
     setEditNotes(customer.notes || '');
@@ -151,9 +151,9 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
     .filter(c => {
       // 1. Search term match
       const term = searchTerm.toLowerCase();
-      const matchesSearch = c.name.toLowerCase().includes(term) ||
-                            c.alias.toLowerCase().includes(term) ||
-                            c.phone.includes(term);
+      const matchesSearch = (c.name || '').toLowerCase().includes(term) ||
+                            (c.alias || '').toLowerCase().includes(term) ||
+                            (c.phone || '').includes(term);
                             
       // 2. Filter tabs match
       if (filterType === 'due') {

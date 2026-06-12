@@ -127,3 +127,12 @@ export async function fetchReminders(date?: string): Promise<Reminder[]> {
   if (!res.ok) throw new Error('Failed to fetch reminders');
   return res.json();
 }
+
+export async function deleteTransaction(id: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/transactions/${id}`, {
+    method: 'DELETE',
+    headers: getHeaders()
+  });
+  if (!res.ok) throw new Error('Failed to delete transaction');
+  return res.json();
+}
