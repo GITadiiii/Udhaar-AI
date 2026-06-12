@@ -181,10 +181,13 @@ UDHAARAI transforms credit management into a simple conversation, reducing opera
 Team
 
 **Aditi Sinha**
+Product Strategy & User Experience
 
 **Rishabh Raj**
+Product Design, Business Strategy & AI Architecture
 
 **Sanskriti**
+Research, Analysis & Solution Development
 
 ---
 
