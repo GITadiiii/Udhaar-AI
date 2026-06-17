@@ -1119,8 +1119,22 @@ export async function deleteTransaction(id, merchantId) {
 export function getCustomerLedger(customerId, merchantId, dateStr) {
   const db = readDb();
   const targetMerchantId = merchantId || 'merchant_1';
-  const customer = getCustomers(targetMerchantId, dateStr).find(c => c.id === customerId);
-  if (!customer) return null;
+  
+  // Try to find the customer as of the target date first (so their balance is computed correctly for that date)
+  let customer = getCustomers(targetMerchantId, dateStr).find(c => c.id === customerId);
+  
+  // If not found, check if they exist in the general directory (i.e. created in the future relative to dateStr)
+  if (!customer) {
+    const futureCustomer = getCustomers(targetMerchantId).find(c => c.id === customerId);
+    if (!futureCustomer) return null; // Customer genuinely does not exist or is deleted
+    
+    // Return customer with 0 balance as of this past date
+    customer = {
+      ...futureCustomer,
+      balance: 0,
+      last_updated: futureCustomer.created_at
+    };
+  }
 
   const targetDate = dateStr ? dateStr.slice(0, 10) : null;
   const transactions = (db.transactions || [])
