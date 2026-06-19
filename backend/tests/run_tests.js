@@ -924,6 +924,56 @@ try {
 
   console.log('✅ [PASS] FIFO outstanding credit date calculation verified successfully');
 
+  // Test Case 21: Merchant Registration & Phone Uniqueness
+  console.log('\n--- Test Case 21: Merchant Registration & Phone Uniqueness ---');
+  const { addMerchant } = await import('../db.js');
+  
+  // Set up clean database
+  const db21 = readDb();
+  db21.users = [
+    { id: "m_existing", name: "Existing Merchant", business_name: "Existing Store", phone: "+919876543210" }
+  ];
+  writeDb(db21);
+  
+  // 21.1: Register with unique phone
+  try {
+    const res = await addMerchant({
+      id: "m_new",
+      name: "New Merchant",
+      business_name: "New Store",
+      phone: "+918888888888"
+    });
+    assert(res.status === 'success' && res.id === 'm_new', 'Successfully registers merchant with unique phone');
+  } catch (err) {
+    assert(false, `Should register unique phone without error. Got: ${err.message}`);
+  }
+  
+  // 21.2: Register duplicate phone suffix
+  try {
+    await addMerchant({
+      id: "m_dup",
+      name: "Duplicate Phone Merchant",
+      business_name: "Duplicate Store",
+      phone: "9876543210" // Matches +919876543210 suffix
+    });
+    assert(false, 'Should throw error when registering duplicate phone');
+  } catch (err) {
+    assert(err.message.includes('This mobile number is already registered.'), `Blocked duplicate phone with correct message (got: ${err.message})`);
+  }
+  
+  // 21.3: Update same merchant with same phone
+  try {
+    const res = await addMerchant({
+      id: "m_existing",
+      name: "Existing Merchant Updated",
+      business_name: "Existing Store Updated",
+      phone: "+919876543210"
+    });
+    assert(res.status === 'success' && res.id === 'm_existing', 'Updating existing merchant with same phone succeeds');
+  } catch (err) {
+    assert(false, `Should update same merchant without error. Got: ${err.message}`);
+  }
+
   // Restore keys
   if (savedKeys) process.env.GEMINI_API_KEYS = savedKeys;
   if (savedKey) process.env.GEMINI_API_KEY = savedKey;

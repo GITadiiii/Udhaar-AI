@@ -51,6 +51,7 @@ export default function App() {
   // Modal states for Login Screen
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
   const [isCreateAccountOpen, setIsCreateAccountOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Edit Profile Form State
   const [editMerchantName, setEditMerchantName] = useState('');
@@ -98,10 +99,12 @@ export default function App() {
 
   const handleCreateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     if (!createMerchantName || !createShopName || !createMerchantPhone) {
       alert('Please fill in all required fields.');
       return;
     }
+    setIsSubmitting(true);
     const newMerchantId = 'merchant_' + Math.random().toString(36).substring(2, 11);
     try {
       await registerMerchant({
@@ -122,6 +125,8 @@ export default function App() {
       setIsAuthenticated(true);
     } catch (err: any) {
       alert(`Registration failed: ${err.message}`);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -425,9 +430,12 @@ export default function App() {
                   <button
                     id="create-account-submit-btn"
                     type="submit"
-                    className="px-5 py-3 rounded-xl bg-brand-green hover:bg-green-700 text-white transition-colors font-semibold text-sm shadow-soft hover:shadow-premium cursor-pointer"
+                    disabled={isSubmitting}
+                    className={`px-5 py-3 rounded-xl text-white transition-colors font-semibold text-sm shadow-soft hover:shadow-premium cursor-pointer ${
+                      isSubmitting ? 'bg-brand-gray-400 cursor-not-allowed' : 'bg-brand-green hover:bg-green-700'
+                    }`}
                   >
-                    Create Account
+                    {isSubmitting ? 'Registering...' : 'Create Account'}
                   </button>
                 </div>
               </form>

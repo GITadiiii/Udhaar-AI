@@ -2551,6 +2551,49 @@ export async function syncToSupabase(db) {
 export async function addMerchant(merchant) {
   const db = readDb();
   const id = merchant.id || 'merchant_1';
+
+  if (merchant.phone && merchant.phone !== '0000000000') {
+    const normPhone = merchant.phone.replace(/\D/g, '');
+    if (normPhone) {
+      // 1. Check local db users
+      const conflict = db.users.find(u => {
+        if (!u.phone || u.phone === '0000000000' || u.id === id) return false;
+        const uNorm = u.phone.replace(/\D/g, '');
+        return uNorm.slice(-10) === normPhone.slice(-10);
+      });
+      if (conflict) {
+        throw new Error('This mobile number is already registered.');
+      }
+      
+      // 2. Check Supabase
+      if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY && process.env.DISABLE_SUPABASE_SYNC !== 'true') {
+        const { supabase } = await import('./supabase.js');
+        const { data: dbUser, error: queryError } = await supabase
+          .from('users')
+          .select('id, phone')
+          .eq('phone', merchant.phone)
+          .maybeSingle();
+        
+        if (queryError) {
+          console.warn('[SUPABASE QUERY ERROR] Phone check failed:', queryError.message);
+        } else if (dbUser && dbUser.id !== toUUID(id)) {
+          throw new Error('This mobile number is already registered.');
+        } else {
+          const { data: dbUsers, error: suffixError } = await supabase
+            .from('users')
+            .select('id, phone')
+            .like('phone', `%${normPhone.slice(-10)}`);
+          
+          if (!suffixError && dbUsers) {
+            const conflictUser = dbUsers.find(u => u.id !== toUUID(id));
+            if (conflictUser) {
+              throw new Error('This mobile number is already registered.');
+            }
+          }
+        }
+      }
+    }
+  }
   
   const existing = db.users.find(u => u.id === id);
   if (existing) {

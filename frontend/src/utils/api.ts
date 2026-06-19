@@ -184,7 +184,7 @@ export async function registerMerchant(merchant: {
     if (!res.ok) {
       const errMsg = responseData?.error || `HTTP error ${res.status}`;
       console.error('[REGISTRATION] Registration failed. Reason:', errMsg);
-      throw new Error(`Registration failed: ${errMsg}`);
+      throw new Error(errMsg);
     }
     
     console.log('[REGISTRATION] Registration successful');
