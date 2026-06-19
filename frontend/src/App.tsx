@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { fetchCustomers, fetchReminders, createCustomer, deleteCustomer, updateCustomer, fetchLedger } from './utils/api';
+import { fetchCustomers, fetchReminders, createCustomer, deleteCustomer, updateCustomer, fetchLedger, registerMerchant } from './utils/api';
 import { Customer, Reminder, Transaction } from './types';
 import Dashboard from './components/Dashboard';
 import Customers from './components/Customers';
@@ -72,36 +72,57 @@ export default function App() {
     setIsEditProfileOpen(true);
   };
 
-  const handleSaveEditProfile = (e: React.FormEvent) => {
+  const handleSaveEditProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    setMerchantName(editMerchantName);
-    setShopName(editShopName);
-    setMerchantPhone(editMerchantPhone);
-    localStorage.setItem('udhaar_merchant_name', editMerchantName);
-    localStorage.setItem('udhaar_shop_name', editShopName);
-    localStorage.setItem('udhaar_merchant_phone', editMerchantPhone);
-    localStorage.setItem('udhaar_business_category', editBusinessCategory);
-    setIsEditProfileOpen(false);
-    setIsAuthenticated(true);
+    const currentMerchantId = localStorage.getItem('udhaar_merchant_id') || 'merchant_1';
+    try {
+      await registerMerchant({
+        id: currentMerchantId,
+        name: editMerchantName,
+        businessName: editShopName,
+        phone: editMerchantPhone
+      });
+      setMerchantName(editMerchantName);
+      setShopName(editShopName);
+      setMerchantPhone(editMerchantPhone);
+      localStorage.setItem('udhaar_merchant_name', editMerchantName);
+      localStorage.setItem('udhaar_shop_name', editShopName);
+      localStorage.setItem('udhaar_merchant_phone', editMerchantPhone);
+      localStorage.setItem('udhaar_business_category', editBusinessCategory);
+      setIsEditProfileOpen(false);
+      setIsAuthenticated(true);
+    } catch (err: any) {
+      alert(`Failed to update profile: ${err.message}`);
+    }
   };
 
-  const handleCreateAccount = (e: React.FormEvent) => {
+  const handleCreateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!createMerchantName || !createShopName || !createMerchantPhone) {
       alert('Please fill in all required fields.');
       return;
     }
     const newMerchantId = 'merchant_' + Math.random().toString(36).substring(2, 11);
-    setMerchantName(createMerchantName);
-    setShopName(createShopName);
-    setMerchantPhone(createMerchantPhone);
-    localStorage.setItem('udhaar_merchant_id', newMerchantId);
-    localStorage.setItem('udhaar_merchant_name', createMerchantName);
-    localStorage.setItem('udhaar_shop_name', createShopName);
-    localStorage.setItem('udhaar_merchant_phone', createMerchantPhone);
-    localStorage.setItem('udhaar_business_type', createBusinessType);
-    setIsCreateAccountOpen(false);
-    setIsAuthenticated(true);
+    try {
+      await registerMerchant({
+        id: newMerchantId,
+        name: createMerchantName,
+        businessName: createShopName,
+        phone: createMerchantPhone
+      });
+      setMerchantName(createMerchantName);
+      setShopName(createShopName);
+      setMerchantPhone(createMerchantPhone);
+      localStorage.setItem('udhaar_merchant_id', newMerchantId);
+      localStorage.setItem('udhaar_merchant_name', createMerchantName);
+      localStorage.setItem('udhaar_shop_name', createShopName);
+      localStorage.setItem('udhaar_merchant_phone', createMerchantPhone);
+      localStorage.setItem('udhaar_business_type', createBusinessType);
+      setIsCreateAccountOpen(false);
+      setIsAuthenticated(true);
+    } catch (err: any) {
+      alert(`Registration failed: ${err.message}`);
+    }
   };
 
   const loadData = async (dateStr?: string) => {
@@ -159,14 +180,24 @@ export default function App() {
     setReminders([]);
   };
 
-  const handleSaveSettings = (e: React.FormEvent) => {
+  const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Simulate saving API Key/Settings locally
-    localStorage.setItem('udhaar_shop_name', shopName);
-    localStorage.setItem('udhaar_merchant_name', merchantName);
-    localStorage.setItem('udhaar_merchant_phone', merchantPhone);
-    localStorage.setItem('udhaar_gemini_key', geminiKey);
-    alert('Settings saved successfully!');
+    const currentMerchantId = localStorage.getItem('udhaar_merchant_id') || 'merchant_1';
+    try {
+      await registerMerchant({
+        id: currentMerchantId,
+        name: merchantName,
+        businessName: shopName,
+        phone: merchantPhone
+      });
+      localStorage.setItem('udhaar_shop_name', shopName);
+      localStorage.setItem('udhaar_merchant_name', merchantName);
+      localStorage.setItem('udhaar_merchant_phone', merchantPhone);
+      localStorage.setItem('udhaar_gemini_key', geminiKey);
+      alert('Settings saved successfully!');
+    } catch (err: any) {
+      alert(`Failed to save settings: ${err.message}`);
+    }
   };
 
   if (!isAuthenticated) {

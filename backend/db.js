@@ -900,8 +900,8 @@ export function getCustomers(merchantId, dateStr) {
         })
         .filter(c => c !== null);
     } catch (err) {
-      console.error('[SUPABASE READ ERROR] Fallback to local db.json:', err.message);
-      return getCustomersLocal(targetMerchantId, dateStr);
+      console.error('[SUPABASE READ ERROR] Customers query failed:', err.message);
+      throw err;
     }
   })();
 }
@@ -1106,8 +1106,8 @@ export function addCustomer({ name, phone, alias, aliases, confirmNew = false, m
       console.log(`[CREATED] New customer profile created: "${newCustomer.name}" (ID: ${newCustomer.id}) for merchant ${targetMerchantId}`);
       return { ...newCustomer, balance: 0, last_updated: newCustomer.created_at };
     } catch (err) {
-      console.error('[SUPABASE WRITE ERROR] Falling back to local db.json for customer creation:', err.message);
-      return addCustomerLocal({ name, phone, alias, aliases, confirmNew, merchantId: targetMerchantId });
+      console.error('[SUPABASE WRITE ERROR] Customer creation failed:', err.message);
+      throw err;
     }
   })();
 }
@@ -1223,6 +1223,7 @@ export async function deleteCustomer(id, merchantId) {
       console.log(`[SUPABASE] Permanently deleted customer UUID: ${toUUID(id)}`);
     } catch (err) {
       console.error('[SUPABASE DELETE ERROR] Customer delete failed:', err.message);
+      throw err;
     }
   }
 
@@ -1389,8 +1390,8 @@ export function updateCustomer(id, { name, phone, alias, address, notes, custome
       
       return updatedCust;
     } catch (err) {
-      console.error('[SUPABASE WRITE ERROR] Falling back to local db.json for customer update:', err.message);
-      return updateCustomerLocal(id, { name, phone, alias, address, notes, customerType, merchantId: targetMerchantId });
+      console.error('[SUPABASE WRITE ERROR] Customer update failed:', err.message);
+      throw err;
     }
   })();
 }
@@ -1660,6 +1661,7 @@ export async function deleteTransaction(id, merchantId) {
       await deleteSummaryFromSupabase(targetMerchantId, tx.date);
     } catch (err) {
       console.error('[SUPABASE DELETE ERROR] Transaction delete failed:', err.message);
+      throw err;
     }
   }
 
@@ -1774,8 +1776,8 @@ export function getCustomerLedger(customerId, merchantId, dateStr) {
         reminders
       };
     } catch (err) {
-      console.error('[SUPABASE READ ERROR] Fallback ledger to local db.json:', err.message);
-      return getCustomerLedgerLocal(customerId, targetMerchantId, dateStr);
+      console.error('[SUPABASE READ ERROR] Ledger query failed:', err.message);
+      throw err;
     }
   })();
 }
@@ -1952,8 +1954,8 @@ export function addTransaction({ customerId, amount, type, description, date, al
       
       return { transaction: newTx, newBalance: balance };
     } catch (err) {
-      console.error('[SUPABASE WRITE ERROR] Falling back to local db.json for transaction creation:', err.message);
-      return addTransactionLocal({ customerId, amount, type, description, date, aliasSpoken, merchantId: targetMerchantId });
+      console.error('[SUPABASE WRITE ERROR] Transaction creation failed:', err.message);
+      throw err;
     }
   })();
 }
@@ -2120,8 +2122,8 @@ export function getReminders(merchantId, dateStr) {
       
       return remindersList;
     } catch (err) {
-      console.error('[SUPABASE READ ERROR] Fallback reminders to local db.json:', err.message);
-      return getRemindersLocal(targetMerchantId, dateStr);
+      console.error('[SUPABASE READ ERROR] Reminders query failed:', err.message);
+      throw err;
     }
   })();
 }
@@ -2434,7 +2436,8 @@ export async function syncToSupabase(db) {
         id: toUUID(u.id),
         name: u.name,
         business_name: JSON.stringify({ business_name: u.business_name, original_id: u.id }),
-        phone: u.phone || '0000000000'
+        phone: u.phone || '0000000000',
+        created_at: u.created_at || new Date().toISOString()
       }));
       if (usersToUpsert.length > 0) {
         const { error: uErr } = await supabase.from('users').upsert(usersToUpsert);
@@ -2474,6 +2477,7 @@ export async function syncToSupabase(db) {
       .map(t => ({
         id: toUUID(t.id),
         customer_id: toUUID(t.customer_id),
+        merchant_id: toUUID(t.merchant_id || 'merchant_1'),
         amount: parseFloat(t.amount),
         type: t.type,
         description: JSON.stringify({
@@ -2489,27 +2493,44 @@ export async function syncToSupabase(db) {
       if (tErr) throw tErr;
     }
 
-    // 4. Sync Daily Summaries
-    const summariesToUpsert = (db.daily_summaries || []).map(s => ({
-      merchant_id: toUUID(s.merchant_id),
-      date: s.date,
-      credit_given: parseFloat(s.credit_given),
-      collections: parseFloat(s.collections),
-      net_change: parseFloat(s.net_change),
-      summary_text: s.summary_text,
-      created_at: s.created_at || new Date().toISOString()
+    // 4. Sync Outstanding Balances
+    const balancesToUpsert = (db.outstanding_balances || []).map(b => ({
+      customer_id: toUUID(b.customer_id),
+      merchant_id: toUUID(b.merchant_id || 'merchant_1'),
+      balance: parseFloat(b.balance),
+      last_updated: b.last_updated || new Date().toISOString()
     }));
+    if (balancesToUpsert.length > 0) {
+      const { error: bErr } = await supabase.from('outstanding_balances').upsert(balancesToUpsert);
+      if (bErr) throw bErr;
+    }
+
+    // 5. Sync Daily Summaries
+    const summariesToUpsert = (db.daily_summaries || []).map(s => {
+      const summaryKey = `${s.merchant_id || 'merchant_1'}_${s.date}`;
+      return {
+        id: toUUID(summaryKey),
+        merchant_id: toUUID(s.merchant_id || 'merchant_1'),
+        date: s.date,
+        credit_given: parseFloat(s.credit_given),
+        collections: parseFloat(s.collections),
+        net_change: parseFloat(s.net_change),
+        summary_text: s.summary_text,
+        created_at: s.created_at || new Date().toISOString()
+      };
+    });
     if (summariesToUpsert.length > 0) {
       const { error: sErr } = await supabase.from('daily_summaries').upsert(summariesToUpsert);
       if (sErr) throw sErr;
     }
 
-    // 5. Sync Reminders
+    // 6. Sync Reminders
     const remindersToUpsert = (db.reminders || [])
       .filter(r => activeCustomerIds.has(r.customer_id))
       .map(r => ({
         id: toUUID(r.id),
         customer_id: toUUID(r.customer_id),
+        merchant_id: toUUID(r.merchant_id || 'merchant_1'),
         amount: parseFloat(r.amount),
         due_date: r.due_date || new Date().toISOString(),
         days_overdue: parseInt(r.days_overdue) || 0,
@@ -2525,4 +2546,42 @@ export async function syncToSupabase(db) {
   } catch (err) {
     console.error('[SUPABASE SYNC ERROR] Failed to upsert state:', err.message);
   }
+}
+
+export async function addMerchant(merchant) {
+  const db = readDb();
+  const id = merchant.id || 'merchant_1';
+  
+  const existing = db.users.find(u => u.id === id);
+  if (existing) {
+    existing.name = merchant.name || existing.name;
+    existing.business_name = merchant.business_name || existing.business_name;
+    existing.phone = merchant.phone || existing.phone;
+  } else {
+    db.users.push({
+      id,
+      name: merchant.name,
+      business_name: merchant.business_name,
+      phone: merchant.phone,
+      created_at: new Date().toISOString()
+    });
+  }
+  
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY && process.env.DISABLE_SUPABASE_SYNC !== 'true') {
+    const { supabase } = await import('./supabase.js');
+    const { error } = await supabase.from('users').upsert({
+      id: toUUID(id),
+      name: merchant.name,
+      business_name: JSON.stringify({ business_name: merchant.business_name, original_id: id }),
+      phone: merchant.phone || '0000000000',
+      created_at: new Date().toISOString()
+    });
+    if (error) {
+      console.error('[SUPABASE WRITE ERROR] Merchant registration failed:', error.message);
+      throw new Error(`Supabase registration failed: ${error.message}`);
+    }
+  }
+  
+  writeDb(db);
+  return { status: 'success', id };
 }

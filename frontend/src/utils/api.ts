@@ -136,3 +136,18 @@ export async function deleteTransaction(id: string): Promise<any> {
   if (!res.ok) throw new Error('Failed to delete transaction');
   return res.json();
 }
+
+export async function registerMerchant(merchant: {
+  id: string;
+  name: string;
+  businessName: string;
+  phone: string;
+}): Promise<any> {
+  const res = await fetch(`${API_BASE}/users`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(merchant)
+  });
+  if (!res.ok) throw new Error('Failed to register merchant');
+  return res.json();
+}

@@ -63,6 +63,23 @@ app.get('/api/test-supabase', async (req, res) => {
     });
   }
 });
+
+// User/Merchant registration endpoint
+app.post('/api/users', async (req, res) => {
+  try {
+    const { id, name, businessName, phone } = req.body;
+    if (!id || !name || !businessName) {
+      return res.status(400).json({ error: 'id, name, and businessName are required' });
+    }
+    
+    const { addMerchant } = await import('./db.js');
+    const result = await addMerchant({ id, name, business_name: businessName, phone });
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 
 app.use(cors({
@@ -400,8 +417,57 @@ app.get('/api/reminders', async (req, res) => {
 });
 
 // Start Server
-mergeDuplicateCustomers();
+async function startServer() {
+  if (process.env.DISABLE_SUPABASE_SYNC !== 'true' && process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
+    console.log('--- Starting Supabase Schema Validation ---');
+    try {
+      const { supabase } = await import('./supabase.js');
+      const schema = {
+        users: ['id', 'name', 'business_name', 'phone', 'created_at'],
+        customers: ['id', 'merchant_id', 'name', 'phone', 'created_at', 'alias'],
+        transactions: ['id', 'merchant_id', 'customer_id', 'amount', 'type', 'description', 'date'],
+        outstanding_balances: ['customer_id', 'merchant_id', 'balance', 'last_updated'],
+        reminders: ['id', 'merchant_id', 'customer_id', 'amount', 'due_date', 'days_overdue', 'priority', 'status'],
+        daily_summaries: ['id', 'merchant_id', 'date', 'credit_given', 'collections', 'net_change', 'summary_text', 'created_at']
+      };
 
-app.listen(PORT, () => {
-  console.log(`Express server running on http://localhost:${PORT}`);
-});
+      const errors = [];
+      for (const [table, columns] of Object.entries(schema)) {
+        for (const column of columns) {
+          const { error } = await supabase.from(table).select(column).limit(1);
+          if (error) {
+            if (error.code === '42P01') {
+              errors.push(`Table "${table}" is missing.`);
+              break;
+            } else if (error.code === '42703' || error.message.includes('does not exist')) {
+              errors.push(`Column "${column}" in table "${table}" is missing.`);
+            } else {
+              errors.push(`Error checking ${table}.${column}: ${error.message} (code ${error.code})`);
+            }
+          }
+        }
+      }
+
+      if (errors.length > 0) {
+        console.error('\n❌ CRITICAL SCHEMA ERROR: Supabase database schema is out of sync!');
+        errors.forEach(err => console.error(`  - ${err}`));
+        console.error('\nPlease run the migration SQL script in your Supabase SQL Editor to align the schema before launching the backend.\n');
+        process.exit(1);
+      } else {
+        console.log('✅ Supabase Schema Validation Passed: All tables and columns match.');
+      }
+    } catch (validationErr) {
+      console.error('❌ Failed to connect/validate Supabase schema:', validationErr.message);
+      process.exit(1);
+    }
+  } else {
+    console.log('ℹ️ Supabase integration is disabled or credentials not provided. Running in local db.json-only fallback mode.');
+  }
+
+  mergeDuplicateCustomers();
+  app.listen(PORT, () => {
+    console.log(`Express server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer();
