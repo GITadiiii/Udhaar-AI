@@ -64,22 +64,6 @@ app.get('/api/test-supabase', async (req, res) => {
   }
 });
 
-// User/Merchant registration endpoint
-app.post('/api/users', async (req, res) => {
-  try {
-    const { id, name, businessName, phone } = req.body;
-    if (!id || !name || !businessName) {
-      return res.status(400).json({ error: 'id, name, and businessName are required' });
-    }
-    
-    const { addMerchant } = await import('./db.js');
-    const result = await addMerchant({ id, name, business_name: businessName, phone });
-    res.status(201).json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 const PORT = process.env.PORT || 5000;
 
 app.use(cors({
@@ -96,6 +80,22 @@ app.use((req, res, next) => {
 });
 
 // API Endpoints
+
+// User/Merchant registration endpoint
+app.post('/api/users', async (req, res) => {
+  try {
+    const { id, name, businessName, phone } = req.body;
+    if (!id || !name || !businessName) {
+      return res.status(400).json({ error: 'id, name, and businessName are required' });
+    }
+    
+    const { addMerchant } = await import('./db.js');
+    const result = await addMerchant({ id, name, business_name: businessName, phone });
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // 1. Get Customers (includes outstanding balance)
 app.get('/api/customers', async (req, res) => {
