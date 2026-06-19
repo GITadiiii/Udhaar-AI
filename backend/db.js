@@ -285,7 +285,147 @@ export function areNamesDistinct(name1, name2) {
  * Returns array of matches.
  */
 export function findExistingCustomer(nameOrId, phone = '', merchantId) {
-  const customers = getCustomers(merchantId);
+  const targetMerchantId = merchantId || 'merchant_1';
+  if (process.env.DISABLE_SUPABASE_SYNC === 'true' || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    return findExistingCustomerLocal(nameOrId, phone, targetMerchantId);
+  }
+  
+  return (async () => {
+    const customers = await getCustomers(targetMerchantId);
+    if (!nameOrId) return [];
+
+    const normPhone = phone ? phone.replace(/\D/g, '') : '';
+    const hasDifferentPhone = (c) => {
+      if (!normPhone || normPhone.length < 10) return false;
+      const cp = c.phone ? c.phone.replace(/\D/g, '') : '';
+      if (!cp || cp.length < 10) return false;
+      return !cp.endsWith(normPhone.slice(-10));
+    };
+
+    const idMatch = customers.filter(c => c.id === nameOrId);
+    if (idMatch.length > 0) {
+      return idMatch;
+    }
+
+    if (normPhone && normPhone.length >= 10) {
+      const phoneMatch = customers.filter(c => {
+        const cp = c.phone ? c.phone.replace(/\D/g, '') : '';
+        return cp && cp.endsWith(normPhone.slice(-10));
+      });
+      if (phoneMatch.length > 0) {
+        console.log(`[LOOKUP] Mobile number match found: [${phoneMatch.map(c=>c.name).join(', ')}]`);
+        return phoneMatch;
+      }
+    }
+
+    const sanitizedName = sanitizeCustomerName(nameOrId);
+    if (!sanitizedName || sanitizedName === 'Unknown Customer') return [];
+
+    const queryNormalized = getNormalizedNameIdentifier(sanitizedName);
+    const queryTransliteratedNormalized = getNormalizedNameIdentifier(transliterateHindiToEnglish(sanitizedName));
+    const queryNormalizedWithSpaces = normalizeCustomerName(sanitizedName);
+    const queryTransliteratedWithSpaces = normalizeCustomerName(transliterateHindiToEnglish(sanitizedName));
+    
+    const queryPhonetic = getPhoneticKey(transliterateHindiToEnglish(sanitizedName));
+
+    const matchedIds = new Set();
+    const matchedCustomers = [];
+
+    const addMatch = (c) => {
+      if (!matchedIds.has(c.id)) {
+        matchedIds.add(c.id);
+        matchedCustomers.push(c);
+      }
+    };
+
+    customers.forEach(c => {
+      if (hasDifferentPhone(c)) return;
+      if (areNamesDistinct(c.name, sanitizedName)) return;
+
+      const cn = normalizeCustomerName(c.name);
+      if (cn === queryNormalizedWithSpaces || cn === queryTransliteratedWithSpaces) {
+        addMatch(c);
+      }
+    });
+
+    if (matchedCustomers.length > 0) {
+      console.log(`[LOOKUP] Exact match found: [${matchedCustomers.map(c=>c.name).join(', ')}]`);
+      return matchedCustomers;
+    }
+
+    customers.forEach(c => {
+      if (hasDifferentPhone(c)) return;
+      if (areNamesDistinct(c.name, sanitizedName)) return;
+
+      const custTranslitNorm = getNormalizedNameIdentifier(transliterateHindiToEnglish(c.name));
+      const custPhonetic = getPhoneticKey(transliterateHindiToEnglish(c.name));
+
+      if (
+        c.normalizedName === queryTransliteratedNormalized ||
+        custTranslitNorm === queryTransliteratedNormalized ||
+        (queryPhonetic && custPhonetic === queryPhonetic)
+      ) {
+        addMatch(c);
+      }
+    });
+
+    const escapedQuery = queryNormalizedWithSpaces.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const queryRegex = new RegExp('\\b' + escapedQuery + '\\b', 'i');
+
+    customers.forEach(c => {
+      if (hasDifferentPhone(c)) return;
+      if (areNamesDistinct(c.name, sanitizedName)) return;
+
+      const cn = normalizeCustomerName(c.name);
+      const cnTranslit = normalizeCustomerName(transliterateHindiToEnglish(c.name));
+
+      if (queryRegex.test(cn) || queryRegex.test(cnTranslit)) {
+        addMatch(c);
+      }
+    });
+
+    customers.forEach(c => {
+      if (hasDifferentPhone(c)) return;
+      if (areNamesDistinct(c.name, sanitizedName)) return;
+
+      const cn = normalizeCustomerName(c.name);
+      const cnTranslit = normalizeCustomerName(transliterateHindiToEnglish(c.name));
+
+      const distName = getLevenshteinDistance(cn, queryNormalizedWithSpaces);
+      const distTranslit = getLevenshteinDistance(cn, queryTransliteratedWithSpaces);
+
+      const maxLen = Math.max(cn.length, queryNormalizedWithSpaces.length);
+      const similarityName = maxLen > 0 ? (maxLen - distName) / maxLen : 0;
+
+      const maxLenTranslit = Math.max(cnTranslit.length, queryTransliteratedWithSpaces.length);
+      const similarityTranslit = maxLenTranslit > 0 ? (maxLenTranslit - distTranslit) / maxLenTranslit : 0;
+
+      const maxSimilarity = Math.max(similarityName, similarityTranslit);
+
+      const aliases = c.aliases || [];
+      const aliasFuzzy = aliases.some(alias => {
+        if (areNamesDistinct(alias, sanitizedName)) return false;
+        const na = normalizeCustomerName(alias);
+        const distAlias = getLevenshteinDistance(na, queryNormalizedWithSpaces);
+        const maxLenAlias = Math.max(na.length, queryNormalizedWithSpaces.length);
+        const similarityAlias = maxLenAlias > 0 ? (maxLenAlias - distAlias) / maxLenAlias : 0;
+        return similarityAlias >= 0.70;
+      });
+
+      if (maxSimilarity >= 0.70 || aliasFuzzy) {
+        addMatch(c);
+      }
+    });
+
+    console.log(`[LOOKUP] Candidate matches found for "${sanitizedName}": [${matchedCustomers.map(c=>c.name).join(', ')}]`);
+    return matchedCustomers;
+  })();
+}
+
+function findExistingCustomerLocal(nameOrId, phone = '', merchantId) {
+  const db = readDb();
+  const targetMerchantId = merchantId || 'merchant_1';
+  const customers = getCustomersLocal(targetMerchantId);
   if (!nameOrId) return [];
 
   const normPhone = phone ? phone.replace(/\D/g, '') : '';
@@ -296,13 +436,11 @@ export function findExistingCustomer(nameOrId, phone = '', merchantId) {
     return !cp.endsWith(normPhone.slice(-10));
   };
 
-  // Step 1: Match by customerId
   const idMatch = customers.filter(c => c.id === nameOrId);
   if (idMatch.length > 0) {
     return idMatch;
   }
 
-  // Step 2: Match by phone number if a valid phone number is provided
   if (normPhone && normPhone.length >= 10) {
     const phoneMatch = customers.filter(c => {
       const cp = c.phone ? c.phone.replace(/\D/g, '') : '';
@@ -314,7 +452,6 @@ export function findExistingCustomer(nameOrId, phone = '', merchantId) {
     }
   }
 
-  // Pre-process and sanitize name query to strip transaction words
   const sanitizedName = sanitizeCustomerName(nameOrId);
   if (!sanitizedName || sanitizedName === 'Unknown Customer') return [];
 
@@ -325,7 +462,6 @@ export function findExistingCustomer(nameOrId, phone = '', merchantId) {
   
   const queryPhonetic = getPhoneticKey(transliterateHindiToEnglish(sanitizedName));
 
-  // We want to find matches using a set to deduplicate
   const matchedIds = new Set();
   const matchedCustomers = [];
 
@@ -336,7 +472,6 @@ export function findExistingCustomer(nameOrId, phone = '', merchantId) {
     }
   };
 
-  // 1. Exact match (case-insensitive, normalized spaces)
   customers.forEach(c => {
     if (hasDifferentPhone(c)) return;
     if (areNamesDistinct(c.name, sanitizedName)) return;
@@ -347,13 +482,11 @@ export function findExistingCustomer(nameOrId, phone = '', merchantId) {
     }
   });
 
-  // If we have exact matches, return them immediately to prioritize exact matches!
   if (matchedCustomers.length > 0) {
     console.log(`[LOOKUP] Exact match found: [${matchedCustomers.map(c=>c.name).join(', ')}]`);
     return matchedCustomers;
   }
 
-  // 2. Transliteration / Phonetic match
   customers.forEach(c => {
     if (hasDifferentPhone(c)) return;
     if (areNamesDistinct(c.name, sanitizedName)) return;
@@ -370,9 +503,6 @@ export function findExistingCustomer(nameOrId, phone = '', merchantId) {
     }
   });
 
-  // 3. Substring/Prefix whole-word boundaries matches
-  // E.g. Query "Sanskriti" matches "Sanskriti Sharma", "Sanskriti Store", etc.
-  // Query "Rahul" matches "Rahul Mechanic"
   const escapedQuery = queryNormalizedWithSpaces.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
   const queryRegex = new RegExp('\\b' + escapedQuery + '\\b', 'i');
 
@@ -388,7 +518,6 @@ export function findExistingCustomer(nameOrId, phone = '', merchantId) {
     }
   });
 
-  // 4. Fuzzy similarity matching (with threshold >= 70%)
   customers.forEach(c => {
     if (hasDifferentPhone(c)) return;
     if (areNamesDistinct(c.name, sanitizedName)) return;
@@ -407,7 +536,6 @@ export function findExistingCustomer(nameOrId, phone = '', merchantId) {
 
     const maxSimilarity = Math.max(similarityName, similarityTranslit);
 
-    // Check aliases
     const aliases = c.aliases || [];
     const aliasFuzzy = aliases.some(alias => {
       if (areNamesDistinct(alias, sanitizedName)) return false;
@@ -675,6 +803,110 @@ export function learnAlias(customerId, aliasName) {
 // ----------------------------------------------------
 
 export function getCustomers(merchantId, dateStr) {
+  const targetMerchantId = merchantId || 'merchant_1';
+  
+  if (process.env.DISABLE_SUPABASE_SYNC === 'true' || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    return getCustomersLocal(targetMerchantId, dateStr);
+  }
+  
+  return (async () => {
+    try {
+      const { supabase } = await import('./supabase.js');
+      const merchantUuid = toUUID(targetMerchantId);
+      
+      const { data: customers, error: cErr } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('merchant_id', merchantUuid);
+      
+      if (cErr) throw cErr;
+      
+      const { data: balances, error: bErr } = await supabase
+        .from('outstanding_balances')
+        .select('*')
+        .eq('merchant_id', merchantUuid);
+        
+      if (bErr) throw bErr;
+      
+      let transactions = [];
+      if (dateStr) {
+        const { data: txs, error: tErr } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('merchant_id', merchantUuid)
+          .lte('date', new Date(dateStr + 'T23:59:59.999Z').toISOString());
+        if (tErr) throw tErr;
+        transactions = txs || [];
+      }
+      
+      const balanceMap = new Map((balances || []).map(b => [b.customer_id, b]));
+      
+      return (customers || [])
+        .map(c => {
+          let alias = c.alias;
+          let aliases = [c.name];
+          let normalizedName = c.name.toLowerCase().replace(/\s+/g, '');
+          let deleted = false;
+          let originalId = c.id;
+          
+          if (c.alias && c.alias.startsWith('{') && c.alias.endsWith('}')) {
+            try {
+              const extra = JSON.parse(c.alias);
+              alias = extra.alias || c.alias;
+              aliases = extra.aliases || aliases;
+              normalizedName = extra.normalizedName || normalizedName;
+              deleted = extra.deleted || false;
+              originalId = extra.original_id || c.id;
+            } catch (e) {}
+          }
+          
+          if (deleted) return null;
+          
+          let balance = 0;
+          let lastUpdated = c.created_at;
+          
+          if (dateStr) {
+            const custTxs = transactions.filter(t => t.customer_id === c.id);
+            balance = custTxs.reduce((sum, t) => {
+              if (t.type === 'credit') return sum + parseFloat(t.amount);
+              return Math.max(0, sum - parseFloat(t.amount));
+            }, 0);
+            const lastTx = custTxs.length > 0 
+              ? [...custTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0] 
+              : null;
+            if (lastTx) lastUpdated = lastTx.date;
+          } else {
+            const balEntry = balanceMap.get(c.id);
+            if (balEntry) {
+              balance = parseFloat(balEntry.balance);
+              lastUpdated = balEntry.last_updated;
+            }
+          }
+          
+          return {
+            id: originalId,
+            merchant_id: targetMerchantId,
+            name: c.name,
+            displayName: c.name,
+            alias,
+            phone: c.phone === '0000000000' ? null : c.phone,
+            created_at: c.created_at,
+            normalizedName,
+            aliases,
+            deleted,
+            balance,
+            last_updated: lastUpdated
+          };
+        })
+        .filter(c => c !== null);
+    } catch (err) {
+      console.error('[SUPABASE READ ERROR] Fallback to local db.json:', err.message);
+      return getCustomersLocal(targetMerchantId, dateStr);
+    }
+  })();
+}
+
+function getCustomersLocal(merchantId, dateStr) {
   const db = readDb();
   const targetMerchantId = merchantId || 'merchant_1';
   const targetDate = dateStr ? dateStr.slice(0, 10) : null;
@@ -763,10 +995,127 @@ export function invalidateSpecificSummary(db, merchantId, dateStr) {
 }
 
 export function addCustomer({ name, phone, alias, aliases, confirmNew = false, merchantId }) {
+  const targetMerchantId = merchantId || 'merchant_1';
+  if (process.env.DISABLE_SUPABASE_SYNC === 'true' || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    return addCustomerLocal({ name, phone, alias, aliases, confirmNew, merchantId: targetMerchantId });
+  }
+  
+  return (async () => {
+    try {
+      const sanitizedName = sanitizeCustomerName(name);
+      
+      const existingCustomers = await getCustomers(targetMerchantId);
+      const norm = getNormalizedNameIdentifier(sanitizedName);
+      const normPhone = phone ? phone.replace(/\D/g, '') : '';
+      
+      const hasDifferentPhone = (c) => {
+        if (!normPhone || normPhone.length < 10) return false;
+        const cp = c.phone ? c.phone.replace(/\D/g, '') : '';
+        if (!cp || cp.length < 10) return false;
+        return !cp.endsWith(normPhone.slice(-10));
+      };
+      
+      if (!confirmNew) {
+        const existing = existingCustomers.find(c => 
+          !c.deleted &&
+          !hasDifferentPhone(c) && 
+          !areNamesDistinct(c.name, sanitizedName) && (
+            c.normalizedName === norm || 
+            getNormalizedNameIdentifier(c.name) === norm ||
+            (c.aliases || []).some(a => getNormalizedNameIdentifier(a) === norm)
+          )
+        );
+        
+        if (existing) {
+          console.log(`[PREVENTED] Duplicate customer profile creation blocked for: "${sanitizedName}". returning existing ID: ${existing.id}`);
+          return {
+            ...existing,
+            was_existing: true
+          };
+        }
+      }
+      
+      const id = 'cust_' + uuidv4().substring(0, 8);
+      const cleanName = sanitizedName;
+      const cleanAlias = sanitizeCustomerName(alias || name.split(' ')[0] || '');
+      const defaultAliases = new Set(aliases || []);
+      defaultAliases.add(cleanName);
+      defaultAliases.add(normalizeCustomerName(cleanName));
+      defaultAliases.add(getNormalizedNameIdentifier(cleanName));
+      
+      const transliterated = transliterateHindiToEnglish(cleanName);
+      defaultAliases.add(transliterated);
+      defaultAliases.add(normalizeCustomerName(transliterated));
+      defaultAliases.add(getNormalizedNameIdentifier(transliterated));
+
+      if (cleanAlias) {
+        defaultAliases.add(cleanAlias);
+        defaultAliases.add(normalizeCustomerName(cleanAlias));
+      }
+
+      const newCustomer = {
+        id,
+        merchant_id: targetMerchantId,
+        name: cleanName,
+        displayName: cleanName,
+        alias: cleanAlias,
+        normalizedName: norm,
+        aliases: Array.from(defaultAliases),
+        phone: phone && phone.trim() ? phone.trim() : null,
+        created_at: new Date().toISOString(),
+        deleted: false
+      };
+      
+      const { supabase } = await import('./supabase.js');
+      const { error: cErr } = await supabase.from('customers').insert({
+        id: toUUID(newCustomer.id),
+        merchant_id: toUUID(newCustomer.merchant_id),
+        name: newCustomer.name,
+        phone: newCustomer.phone || '0000000000',
+        alias: JSON.stringify({
+          alias: newCustomer.alias,
+          aliases: newCustomer.aliases,
+          normalizedName: newCustomer.normalizedName,
+          deleted: false,
+          original_id: newCustomer.id,
+          original_merchant_id: newCustomer.merchant_id
+        }),
+        created_at: newCustomer.created_at
+      });
+      if (cErr) throw cErr;
+      
+      const { error: bErr } = await supabase.from('outstanding_balances').insert({
+        customer_id: toUUID(newCustomer.id),
+        merchant_id: toUUID(newCustomer.merchant_id),
+        balance: 0.00,
+        last_updated: newCustomer.created_at
+      });
+      if (bErr) throw bErr;
+      
+      const db = readDb();
+      db.customers.push(newCustomer);
+      db.outstanding_balances.push({
+        customer_id: newCustomer.id,
+        merchant_id: targetMerchantId,
+        balance: 0,
+        last_updated: newCustomer.created_at
+      });
+      invalidateMerchantSummaries(db, targetMerchantId);
+      fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
+      
+      console.log(`[CREATED] New customer profile created: "${newCustomer.name}" (ID: ${newCustomer.id}) for merchant ${targetMerchantId}`);
+      return { ...newCustomer, balance: 0, last_updated: newCustomer.created_at };
+    } catch (err) {
+      console.error('[SUPABASE WRITE ERROR] Falling back to local db.json for customer creation:', err.message);
+      return addCustomerLocal({ name, phone, alias, aliases, confirmNew, merchantId: targetMerchantId });
+    }
+  })();
+}
+
+function addCustomerLocal({ name, phone, alias, aliases, confirmNew = false, merchantId }) {
   const db = readDb();
   const targetMerchantId = merchantId || 'merchant_1';
   
-  // Pre-process and sanitize name query to strip transaction words
   const sanitizedName = sanitizeCustomerName(name);
   const norm = getNormalizedNameIdentifier(sanitizedName);
 
@@ -778,7 +1127,6 @@ export function addCustomer({ name, phone, alias, aliases, confirmNew = false, m
     return !cp.endsWith(normPhone.slice(-10));
   };
 
-  // Validation: Prevent duplicate insertion at Database Driver layer if confirmNew is false
   if (!confirmNew) {
     const existing = db.customers.find(c => 
       !c.deleted &&
@@ -843,7 +1191,7 @@ export function addCustomer({ name, phone, alias, aliases, confirmNew = false, m
 
   invalidateMerchantSummaries(db, targetMerchantId);
   writeDb(db);
-  console.log(`[CREATED] New customer profile created: "${newCustomer.name}" (ID: ${newCustomer.id}) for merchant ${targetMerchantId}`);
+  console.log(`[CREATED] New customer profile created locally: "${newCustomer.name}" (ID: ${newCustomer.id}) for merchant ${targetMerchantId}`);
   return { ...newCustomer, balance: 0, last_updated: newCustomer.created_at };
 }
 
@@ -884,6 +1232,170 @@ export async function deleteCustomer(id, merchantId) {
 }
 
 export function updateCustomer(id, { name, phone, alias, address, notes, customerType, merchantId }) {
+  const targetMerchantId = merchantId || 'merchant_1';
+  if (process.env.DISABLE_SUPABASE_SYNC === 'true' || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    return updateCustomerLocal(id, { name, phone, alias, address, notes, customerType, merchantId: targetMerchantId });
+  }
+  
+  return (async () => {
+    try {
+      const sanitizedName = sanitizeCustomerName(name);
+      const norm = getNormalizedNameIdentifier(sanitizedName);
+      
+      const existingCustomers = await getCustomers(targetMerchantId);
+      const customer = existingCustomers.find(c => c.id === id);
+      if (!customer) {
+        throw new Error('Customer not found');
+      }
+      
+      if (!name || name.trim().length < 2) {
+        throw new Error('Customer name must be at least 2 characters');
+      }
+      
+      let cleanPhone = phone;
+      if (phone) {
+        cleanPhone = phone.trim();
+        const phoneRegex = /^(?:\+?91)?[6-9]\d{9}$/;
+        if (!phoneRegex.test(cleanPhone)) {
+          throw new Error('Invalid phone number format');
+        }
+      }
+      
+      const normPhone = cleanPhone ? cleanPhone.replace(/\D/g, '') : '';
+      const hasDifferentPhone = (c) => {
+        if (!normPhone || normPhone.length < 10) return false;
+        const cp = c.phone ? c.phone.replace(/\D/g, '') : '';
+        if (!cp || cp.length < 10) return false;
+        return !cp.endsWith(normPhone.slice(-10));
+      };
+      
+      const duplicate = existingCustomers.find(c =>
+        c.id !== id &&
+        !c.deleted &&
+        !hasDifferentPhone(c) &&
+        !areNamesDistinct(c.name, sanitizedName) && (
+          c.normalizedName === norm ||
+          getNormalizedNameIdentifier(c.name) === norm ||
+          (c.aliases || []).some(a => getNormalizedNameIdentifier(a) === norm)
+        )
+      );
+      
+      if (duplicate) {
+        throw new Error('Customer with this name already exists');
+      }
+      
+      const updatedAliases = customer.aliases || [];
+      if (!updatedAliases.includes(sanitizedName)) {
+        updatedAliases.push(sanitizedName);
+      }
+      
+      const cleanAlias = sanitizeCustomerName(alias || name.split(' ')[0] || '');
+      const defaultAliases = new Set(updatedAliases);
+      defaultAliases.add(sanitizedName);
+      defaultAliases.add(normalizeCustomerName(sanitizedName));
+      defaultAliases.add(getNormalizedNameIdentifier(sanitizedName));
+
+      const transliterated = transliterateHindiToEnglish(sanitizedName);
+      defaultAliases.add(transliterated);
+      defaultAliases.add(normalizeCustomerName(transliterated));
+      defaultAliases.add(getNormalizedNameIdentifier(transliterated));
+
+      if (cleanAlias) {
+        defaultAliases.add(cleanAlias);
+        defaultAliases.add(normalizeCustomerName(cleanAlias));
+      }
+
+      const updatedCust = {
+        ...customer,
+        name: sanitizedName,
+        displayName: sanitizedName,
+        phone: cleanPhone || null,
+        alias: cleanAlias,
+        address: address !== undefined ? address : customer.address || '',
+        notes: notes !== undefined ? notes : customer.notes || '',
+        customerType: customerType !== undefined ? customerType : customer.customerType || 'Retail',
+        normalizedName: norm,
+        aliases: Array.from(defaultAliases)
+      };
+      
+      const { supabase } = await import('./supabase.js');
+      const { error: cErr } = await supabase
+        .from('customers')
+        .update({
+          name: updatedCust.name,
+          phone: updatedCust.phone || '0000000000',
+          alias: JSON.stringify({
+            alias: updatedCust.alias,
+            aliases: updatedCust.aliases,
+            normalizedName: updatedCust.normalizedName,
+            address: updatedCust.address,
+            notes: updatedCust.notes,
+            customerType: updatedCust.customerType,
+            deleted: false,
+            original_id: updatedCust.id,
+            original_merchant_id: targetMerchantId
+          })
+        })
+        .eq('id', toUUID(id))
+        .eq('merchant_id', toUUID(targetMerchantId));
+        
+      if (cErr) throw cErr;
+      
+      const db = readDb();
+      const localIndex = db.customers.findIndex(c => c.id === id);
+      if (localIndex !== -1) {
+        db.customers[localIndex] = {
+          ...db.customers[localIndex],
+          name: updatedCust.name,
+          displayName: updatedCust.name,
+          phone: updatedCust.phone,
+          alias: updatedCust.alias,
+          address: updatedCust.address,
+          notes: updatedCust.notes,
+          customerType: updatedCust.customerType,
+          normalizedName: updatedCust.normalizedName,
+          aliases: updatedCust.aliases
+        };
+        db.reminders = (db.reminders || []).map(r => {
+          if (r.customer_id === id && (r.merchant_id || 'merchant_1') === targetMerchantId) {
+            return {
+              ...r,
+              customer_name: sanitizedName,
+              customer_phone: updatedCust.phone
+            };
+          }
+          return r;
+        });
+        invalidateMerchantSummaries(db, targetMerchantId);
+        fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
+      }
+      
+      const ledgerData = await getCustomerLedger(id, targetMerchantId);
+      const remindersList = ledgerData.reminders || [];
+      await supabase.from('reminders').delete().eq('customer_id', toUUID(id));
+      if (remindersList.length > 0) {
+        const remindersToInsert = remindersList.map(r => ({
+          id: toUUID(r.id),
+          merchant_id: toUUID(targetMerchantId),
+          customer_id: toUUID(id),
+          amount: parseFloat(r.amount),
+          due_date: r.due_date,
+          days_overdue: r.days_overdue,
+          priority: r.priority,
+          status: r.status
+        }));
+        await supabase.from('reminders').insert(remindersToInsert);
+      }
+      
+      return updatedCust;
+    } catch (err) {
+      console.error('[SUPABASE WRITE ERROR] Falling back to local db.json for customer update:', err.message);
+      return updateCustomerLocal(id, { name, phone, alias, address, notes, customerType, merchantId: targetMerchantId });
+    }
+  })();
+}
+
+function updateCustomerLocal(id, { name, phone, alias, address, notes, customerType, merchantId }) {
   const db = readDb();
   const targetMerchantId = merchantId || 'merchant_1';
   
@@ -899,7 +1411,6 @@ export function updateCustomer(id, { name, phone, alias, address, notes, custome
   let cleanPhone = phone;
   if (phone) {
     cleanPhone = phone.trim();
-    // Validate: 10-digit Indian mobile number, optionally prefixed with +91
     const phoneRegex = /^(?:\+?91)?[6-9]\d{9}$/;
     if (!phoneRegex.test(cleanPhone)) {
       throw new Error('Invalid phone number format');
@@ -980,7 +1491,7 @@ export function updateCustomer(id, { name, phone, alias, address, notes, custome
 
   invalidateMerchantSummaries(db, targetMerchantId);
   writeDb(db);
-  console.log(`[UPDATED] Customer profile updated: "${customer.name}" (ID: ${id})`);
+  console.log(`[UPDATED] Customer profile updated locally: "${customer.name}" (ID: ${id})`);
   
   const custTxs = (db.transactions || []).filter(t => t.customer_id === id && (t.merchant_id || 'merchant_1') === targetMerchantId);
   const lastTx = custTxs.length > 0 
@@ -1099,13 +1610,54 @@ export async function deleteTransaction(id, merchantId) {
 
   invalidateSpecificSummary(db, targetMerchantId, tx.date);
 
-  // Perform permanent delete from Supabase (if credentials configured)
+  // Perform permanent delete and recalculate in Supabase
   if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY && process.env.DISABLE_SUPABASE_SYNC !== 'true') {
     try {
       const { supabase } = await import('./supabase.js');
-      const { error } = await supabase.from('transactions').delete().eq('id', toUUID(id));
-      if (error) throw error;
-      console.log(`[SUPABASE] Permanently deleted transaction UUID: ${toUUID(id)}`);
+      const txUuid = toUUID(id);
+      const customerUuid = toUUID(customerId);
+      const merchantUuid = toUUID(targetMerchantId);
+
+      const { error: dErr } = await supabase.from('transactions').delete().eq('id', txUuid);
+      if (dErr) throw dErr;
+
+      const { data: dbTxs, error: fErr } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('customer_id', customerUuid);
+      if (fErr) throw fErr;
+
+      const balance = (dbTxs || []).reduce((sum, t) => {
+        if (t.type === 'credit') return sum + parseFloat(t.amount);
+        return Math.max(0, sum - parseFloat(t.amount));
+      }, 0);
+
+      const { error: bErr } = await supabase.from('outstanding_balances').upsert({
+        customer_id: customerUuid,
+        merchant_id: merchantUuid,
+        balance,
+        last_updated: new Date().toISOString()
+      });
+      if (bErr) throw bErr;
+
+      const ledgerData = await getCustomerLedger(customerId, targetMerchantId);
+      const remindersList = ledgerData.reminders || [];
+      await supabase.from('reminders').delete().eq('customer_id', customerUuid);
+      if (remindersList.length > 0) {
+        const remindersToInsert = remindersList.map(r => ({
+          id: toUUID(r.id),
+          merchant_id: merchantUuid,
+          customer_id: customerUuid,
+          amount: parseFloat(r.amount),
+          due_date: r.due_date,
+          days_overdue: r.days_overdue,
+          priority: r.priority,
+          status: r.status
+        }));
+        await supabase.from('reminders').insert(remindersToInsert);
+      }
+
+      await deleteSummaryFromSupabase(targetMerchantId, tx.date);
     } catch (err) {
       console.error('[SUPABASE DELETE ERROR] Transaction delete failed:', err.message);
     }
@@ -1117,18 +1669,127 @@ export async function deleteTransaction(id, merchantId) {
 }
 
 export function getCustomerLedger(customerId, merchantId, dateStr) {
+  const targetMerchantId = merchantId || 'merchant_1';
+  if (process.env.DISABLE_SUPABASE_SYNC === 'true' || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    return getCustomerLedgerLocal(customerId, targetMerchantId, dateStr);
+  }
+  
+  return (async () => {
+    try {
+      const { supabase } = await import('./supabase.js');
+      const customerUuid = toUUID(customerId);
+      const merchantUuid = toUUID(targetMerchantId);
+      
+      const { data: customerData, error: cErr } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('id', customerUuid)
+        .eq('merchant_id', merchantUuid)
+        .single();
+      
+      if (cErr) throw cErr;
+      if (!customerData) return null;
+      
+      let alias = customerData.alias;
+      let aliases = [customerData.name];
+      let normalizedName = customerData.name.toLowerCase().replace(/\s+/g, '');
+      let deleted = false;
+      let originalId = customerData.id;
+      
+      if (customerData.alias && customerData.alias.startsWith('{') && customerData.alias.endsWith('}')) {
+        try {
+          const extra = JSON.parse(customerData.alias);
+          alias = extra.alias || customerData.alias;
+          aliases = extra.aliases || aliases;
+          normalizedName = extra.normalizedName || normalizedName;
+          deleted = extra.deleted || false;
+          originalId = extra.original_id || customerData.id;
+        } catch (e) {}
+      }
+      
+      if (deleted) return null;
+      
+      let txQuery = supabase
+        .from('transactions')
+        .select('*')
+        .eq('customer_id', customerUuid)
+        .eq('merchant_id', merchantUuid);
+        
+      if (dateStr) {
+        txQuery = txQuery.lte('date', new Date(dateStr + 'T23:59:59.999Z').toISOString());
+      }
+      
+      const { data: txs, error: tErr } = await txQuery;
+      if (tErr) throw tErr;
+      
+      const transactions = (txs || []).map(t => {
+        let description = t.description;
+        let originalTxId = t.id;
+        if (t.description && t.description.startsWith('{') && t.description.endsWith('}')) {
+          try {
+            const extra = JSON.parse(t.description);
+            description = extra.description || t.description;
+            originalTxId = extra.original_id || t.id;
+          } catch (e) {}
+        }
+        return {
+          id: originalTxId,
+          merchant_id: targetMerchantId,
+          customer_id: customerId,
+          amount: parseFloat(t.amount),
+          type: t.type,
+          description,
+          date: t.date
+        };
+      }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      
+      const balance = transactions.reduce((sum, t) => {
+        if (t.type === 'credit') return sum + t.amount;
+        return Math.max(0, sum - t.amount);
+      }, 0);
+      
+      const lastActiveDate = transactions.length > 0 ? transactions[transactions.length - 1].date : customerData.created_at;
+      
+      const customer = {
+        id: originalId,
+        merchant_id: targetMerchantId,
+        name: customerData.name,
+        displayName: customerData.name,
+        alias,
+        phone: customerData.phone === '0000000000' ? null : customerData.phone,
+        created_at: customerData.created_at,
+        normalizedName,
+        aliases,
+        deleted,
+        balance,
+        last_updated: lastActiveDate
+      };
+      
+      const allReminders = await getReminders(targetMerchantId, dateStr);
+      const reminders = allReminders.filter(r => r.customer_id === customerId);
+      
+      return {
+        customer,
+        transactions,
+        reminders
+      };
+    } catch (err) {
+      console.error('[SUPABASE READ ERROR] Fallback ledger to local db.json:', err.message);
+      return getCustomerLedgerLocal(customerId, targetMerchantId, dateStr);
+    }
+  })();
+}
+
+function getCustomerLedgerLocal(customerId, merchantId, dateStr) {
   const db = readDb();
   const targetMerchantId = merchantId || 'merchant_1';
   
-  // Try to find the customer as of the target date first (so their balance is computed correctly for that date)
-  let customer = getCustomers(targetMerchantId, dateStr).find(c => c.id === customerId);
+  let customer = getCustomersLocal(targetMerchantId, dateStr).find(c => c.id === customerId);
   
-  // If not found, check if they exist in the general directory (i.e. created in the future relative to dateStr)
   if (!customer) {
-    const futureCustomer = getCustomers(targetMerchantId).find(c => c.id === customerId);
-    if (!futureCustomer) return null; // Customer genuinely does not exist or is deleted
+    const futureCustomer = getCustomersLocal(targetMerchantId).find(c => c.id === customerId);
+    if (!futureCustomer) return null;
     
-    // Return customer with 0 balance as of this past date
     customer = {
       ...futureCustomer,
       balance: 0,
@@ -1141,7 +1802,7 @@ export function getCustomerLedger(customerId, merchantId, dateStr) {
     .filter(t => t.customer_id === customerId && (t.merchant_id || 'merchant_1') === targetMerchantId && (!targetDate || getLocalDateStr(t.date) <= targetDate))
     .sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime());
 
-  const reminders = getReminders(targetMerchantId, dateStr).filter(r => r.customer_id === customerId);
+  const reminders = getRemindersLocal(targetMerchantId, dateStr).filter(r => r.customer_id === customerId);
 
   return {
     customer,
@@ -1151,6 +1812,153 @@ export function getCustomerLedger(customerId, merchantId, dateStr) {
 }
 
 export function addTransaction({ customerId, amount, type, description, date, aliasSpoken, merchantId }) {
+  const targetMerchantId = merchantId || 'merchant_1';
+  if (process.env.DISABLE_SUPABASE_SYNC === 'true' || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    return addTransactionLocal({ customerId, amount, type, description, date, aliasSpoken, merchantId: targetMerchantId });
+  }
+  
+  return (async () => {
+    try {
+      const parsedAmount = Math.max(0, parseFloat(amount));
+      const txDate = date ? new Date(date).toISOString() : new Date().toISOString();
+      const txId = 'tx_' + uuidv4().substring(0, 8);
+      
+      const newTx = {
+        id: txId,
+        merchant_id: targetMerchantId,
+        customer_id: customerId,
+        amount: parsedAmount,
+        type,
+        description: description || (type === 'credit' ? 'Udhaar entry' : 'Wapas received'),
+        date: txDate
+      };
+      
+      const { supabase } = await import('./supabase.js');
+      const customerUuid = toUUID(customerId);
+      const merchantUuid = toUUID(targetMerchantId);
+      
+      if (aliasSpoken) {
+        const { data: customerData } = await supabase
+          .from('customers')
+          .select('*')
+          .eq('id', customerUuid)
+          .single();
+          
+        if (customerData) {
+          let alias = customerData.alias;
+          let aliases = [customerData.name];
+          let normalizedName = customerData.name.toLowerCase().replace(/\s+/g, '');
+          let deleted = false;
+          let originalId = customerData.id;
+          
+          if (customerData.alias && customerData.alias.startsWith('{') && customerData.alias.endsWith('}')) {
+            try {
+              const extra = JSON.parse(customerData.alias);
+              alias = extra.alias || customerData.alias;
+              aliases = extra.aliases || aliases;
+              normalizedName = extra.normalizedName || normalizedName;
+              deleted = extra.deleted || false;
+              originalId = extra.original_id || customerData.id;
+            } catch (e) {}
+          }
+          
+          const cleanAlias = aliasSpoken.trim();
+          if (!aliases.includes(cleanAlias)) {
+            aliases.push(cleanAlias);
+            await supabase.from('customers').update({
+              alias: JSON.stringify({
+                alias,
+                aliases,
+                normalizedName,
+                deleted,
+                original_id: originalId,
+                original_merchant_id: targetMerchantId
+              })
+            }).eq('id', customerUuid);
+          }
+        }
+      }
+      
+      const { error: tErr } = await supabase.from('transactions').insert({
+        id: toUUID(txId),
+        customer_id: customerUuid,
+        merchant_id: merchantUuid,
+        amount: parsedAmount,
+        type,
+        description: JSON.stringify({
+          description: newTx.description,
+          original_id: txId,
+          original_customer_id: customerId,
+          merchant_id: targetMerchantId
+        }),
+        date: txDate
+      });
+      if (tErr) throw tErr;
+      
+      const { data: txs, error: fErr } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('customer_id', customerUuid);
+      if (fErr) throw fErr;
+      
+      const balance = (txs || []).reduce((sum, t) => {
+        if (t.type === 'credit') return sum + parseFloat(t.amount);
+        return Math.max(0, sum - parseFloat(t.amount));
+      }, 0);
+      
+      const { error: bErr } = await supabase.from('outstanding_balances').upsert({
+        customer_id: customerUuid,
+        merchant_id: merchantUuid,
+        balance,
+        last_updated: txDate
+      });
+      if (bErr) throw bErr;
+      
+      const ledgerData = await getCustomerLedger(customerId, targetMerchantId);
+      const remindersList = ledgerData.reminders || [];
+      await supabase.from('reminders').delete().eq('customer_id', customerUuid);
+      if (remindersList.length > 0) {
+        const remindersToInsert = remindersList.map(r => ({
+          id: toUUID(r.id),
+          merchant_id: merchantUuid,
+          customer_id: customerUuid,
+          amount: parseFloat(r.amount),
+          due_date: r.due_date,
+          days_overdue: r.days_overdue,
+          priority: r.priority,
+          status: r.status
+        }));
+        await supabase.from('reminders').insert(remindersToInsert);
+      }
+      
+      await deleteSummaryFromSupabase(targetMerchantId, txDate);
+      
+      const db = readDb();
+      db.transactions.push(newTx);
+      let localBalanceEntry = db.outstanding_balances.find(b => b.customer_id === customerId && (b.merchant_id || 'merchant_1') === targetMerchantId);
+      if (!localBalanceEntry) {
+        localBalanceEntry = { customer_id: customerId, merchant_id: targetMerchantId, balance: 0, last_updated: txDate };
+        db.outstanding_balances.push(localBalanceEntry);
+      }
+      if (type === 'credit') {
+        localBalanceEntry.balance += parsedAmount;
+      } else {
+        localBalanceEntry.balance = Math.max(0, localBalanceEntry.balance - parsedAmount);
+      }
+      localBalanceEntry.last_updated = txDate;
+      syncRemindersForCustomer(db, customerId, targetMerchantId);
+      invalidateSpecificSummary(db, targetMerchantId, txDate);
+      fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
+      
+      return { transaction: newTx, newBalance: balance };
+    } catch (err) {
+      console.error('[SUPABASE WRITE ERROR] Falling back to local db.json for transaction creation:', err.message);
+      return addTransactionLocal({ customerId, amount, type, description, date, aliasSpoken, merchantId: targetMerchantId });
+    }
+  })();
+}
+
+function addTransactionLocal({ customerId, amount, type, description, date, aliasSpoken, merchantId }) {
   const db = readDb();
   const targetMerchantId = merchantId || 'merchant_1';
 
@@ -1177,7 +1985,7 @@ export function addTransaction({ customerId, amount, type, description, date, al
     merchant_id: targetMerchantId,
     customer_id: customerId,
     amount: parsedAmount,
-    type, // 'credit' or 'collection'
+    type,
     description: description || (type === 'credit' ? 'Udhaar entry' : 'Wapas received'),
     date: txDate
   };
@@ -1185,14 +1993,12 @@ export function addTransaction({ customerId, amount, type, description, date, al
   db.transactions.push(newTx);
   console.log(`[TRANSACTION ATTACHED] Added ${type} of ₹${parsedAmount} to customer ID ${customerId}`);
 
-  // Update Outstanding Balance
   let balanceEntry = db.outstanding_balances.find(b => b.customer_id === customerId && (b.merchant_id || 'merchant_1') === targetMerchantId);
   if (!balanceEntry) {
     balanceEntry = { customer_id: customerId, merchant_id: targetMerchantId, balance: 0, last_updated: txDate };
     db.outstanding_balances.push(balanceEntry);
   }
 
-  const oldBalance = balanceEntry.balance;
   if (type === 'credit') {
     balanceEntry.balance += parsedAmount;
   } else {
@@ -1201,14 +2007,126 @@ export function addTransaction({ customerId, amount, type, description, date, al
   balanceEntry.last_updated = txDate;
 
   syncRemindersForCustomer(db, customerId, targetMerchantId);
-
   invalidateSpecificSummary(db, targetMerchantId, txDate);
-
   writeDb(db);
   return { transaction: newTx, newBalance: balanceEntry.balance };
 }
 
 export function getReminders(merchantId, dateStr) {
+  const targetMerchantId = merchantId || 'merchant_1';
+  if (process.env.DISABLE_SUPABASE_SYNC === 'true' || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    return getRemindersLocal(targetMerchantId, dateStr);
+  }
+  
+  return (async () => {
+    try {
+      const customers = await getCustomers(targetMerchantId, dateStr);
+      const { supabase } = await import('./supabase.js');
+      const merchantUuid = toUUID(targetMerchantId);
+      
+      const targetDate = dateStr ? dateStr.slice(0, 10) : getTodayStr();
+      
+      const { data: txs, error: tErr } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('merchant_id', merchantUuid)
+        .lte('date', new Date(targetDate + 'T23:59:59.999Z').toISOString());
+        
+      if (tErr) throw tErr;
+      
+      const transactions = (txs || []).map(t => {
+        let description = t.description;
+        let originalTxId = t.id;
+        let originalCustomerId = t.customer_id;
+        if (t.description && t.description.startsWith('{') && t.description.endsWith('}')) {
+          try {
+            const extra = JSON.parse(t.description);
+            description = extra.description || t.description;
+            originalTxId = extra.original_id || t.id;
+            originalCustomerId = extra.original_customer_id || t.customer_id;
+          } catch (e) {}
+        }
+        return {
+          id: originalTxId,
+          merchant_id: targetMerchantId,
+          customer_id: originalCustomerId,
+          amount: parseFloat(t.amount),
+          type: t.type,
+          description,
+          date: t.date
+        };
+      });
+      
+      const remindersList = [];
+      
+      for (const customer of customers) {
+        const customerTxs = transactions.filter(t => t.customer_id === customer.id);
+        const balance = customerTxs.reduce((sum, t) => {
+          if (t.type === 'credit') return sum + t.amount;
+          return Math.max(0, sum - t.amount);
+        }, 0);
+        
+        if (balance > 0) {
+          const credits = customerTxs
+            .filter(t => t.type === 'credit')
+            .sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime())
+            .map(t => ({ date: t.date, amount: t.amount, remaining: t.amount }));
+
+          const collections = customerTxs
+            .filter(t => t.type === 'collection')
+            .sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime());
+
+          for (const col of collections) {
+            let colAmount = col.amount;
+            for (const cred of credits) {
+              if (cred.remaining > 0) {
+                const deduct = Math.min(colAmount, cred.remaining);
+                cred.remaining -= deduct;
+                colAmount -= deduct;
+                if (colAmount <= 0) break;
+              }
+            }
+          }
+
+          const oldestOutstanding = credits.find(c => c.remaining > 0);
+          const refDate = oldestOutstanding 
+            ? new Date(oldestOutstanding.date) 
+            : (credits.length > 0 ? new Date(credits[0].date) : new Date(customer.created_at || new Date()));
+
+          const daysOverdue = getCalendarDaysDiff(targetDate, refDate);
+
+          let priority = 'Soft';
+          if (daysOverdue >= 10) {
+            priority = 'High';
+          } else if (daysOverdue >= 5) {
+            priority = 'Medium';
+          }
+
+          remindersList.push({
+            id: `rem_${customer.id}`,
+            merchant_id: targetMerchantId,
+            customer_id: customer.id,
+            customer_name: customer.name,
+            customer_phone: customer.phone || '',
+            amount: balance,
+            priority,
+            status: 'pending',
+            days_overdue: daysOverdue,
+            due_date: refDate.toISOString(),
+            created_at: new Date().toISOString()
+          });
+        }
+      }
+      
+      return remindersList;
+    } catch (err) {
+      console.error('[SUPABASE READ ERROR] Fallback reminders to local db.json:', err.message);
+      return getRemindersLocal(targetMerchantId, dateStr);
+    }
+  })();
+}
+
+function getRemindersLocal(merchantId, dateStr) {
   const db = readDb();
   const targetMerchantId = merchantId || 'merchant_1';
   const customers = (db.customers || []).filter(c => !c.deleted && (c.merchant_id || 'merchant_1') === targetMerchantId);
@@ -1233,12 +2151,12 @@ export function getReminders(merchantId, dateStr) {
     if (balance > 0) {
       const credits = customerTxs
         .filter(t => t.type === 'credit')
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        .sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime())
         .map(t => ({ date: t.date, amount: t.amount, remaining: t.amount }));
 
       const collections = customerTxs
         .filter(t => t.type === 'collection')
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        .sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime());
 
       for (const col of collections) {
         let colAmount = col.amount;
@@ -1285,9 +2203,9 @@ export function getReminders(merchantId, dateStr) {
   return remindersList;
 }
 
-function toUUID(id) {
+export function toUUID(id) {
   if (!id) return null;
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (uuidRegex.test(id)) return id;
   const hash = crypto.createHash('sha256').update(id).digest('hex');
   return [

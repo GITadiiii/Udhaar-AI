@@ -81,11 +81,11 @@ app.use((req, res, next) => {
 // API Endpoints
 
 // 1. Get Customers (includes outstanding balance)
-app.get('/api/customers', (req, res) => {
+app.get('/api/customers', async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
     const dateStr = req.query.date; // YYYY-MM-DD
-    const customers = getCustomers(merchantId, dateStr);
+    const customers = await getCustomers(merchantId, dateStr);
     res.json(customers);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -101,10 +101,10 @@ app.post('/api/customers', async (req, res) => {
       return res.status(400).json({ error: 'Customer name is required' });
     }
 
-    const customers = getCustomers(merchantId);
+    const customers = await getCustomers(merchantId);
     const canonicalName = await getCanonicalName(name, customers);
     const normCanonicalName = normalizeCustomerName(canonicalName);
-    const matches = findExistingCustomer(canonicalName, phone, merchantId);
+    const matches = await findExistingCustomer(canonicalName, phone, merchantId);
 
     // 1. Exact normalized name match: Always prevent duplication and return existing
     const exact = matches.find(m => normalizeCustomerName(m.name) === normCanonicalName);
@@ -144,7 +144,7 @@ app.post('/api/customers', async (req, res) => {
     }
 
     // 4. No matches or merchant explicitly confirmed creation
-    const customer = addCustomer({ name: canonicalName, phone, alias, aliases: [name], confirmNew, merchantId });
+    const customer = await addCustomer({ name: canonicalName, phone, alias, aliases: [name], confirmNew, merchantId });
     res.status(201).json(customer);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -152,12 +152,12 @@ app.post('/api/customers', async (req, res) => {
 });
 
 // 3. Get Detailed Customer Ledger
-app.get('/api/customers/:id/ledger', (req, res) => {
+app.get('/api/customers/:id/ledger', async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
     const { id } = req.params;
     const dateStr = req.query.date; // YYYY-MM-DD
-    const ledger = getCustomerLedger(id, merchantId, dateStr);
+    const ledger = await getCustomerLedger(id, merchantId, dateStr);
     if (!ledger) {
       return res.status(404).json({ error: 'Customer ledger not found' });
     }
@@ -168,13 +168,13 @@ app.get('/api/customers/:id/ledger', (req, res) => {
 });
 
 // Update Customer details
-app.put('/api/customers/:id', (req, res) => {
+app.put('/api/customers/:id', async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
     const { id } = req.params;
     const { name, phone, alias, address, notes, customerType } = req.body;
 
-    const updatedCustomer = updateCustomer(id, {
+    const updatedCustomer = await updateCustomer(id, {
       name,
       phone,
       alias,
@@ -226,7 +226,7 @@ app.delete('/api/transactions/:id', async (req, res) => {
 });
 
 // 4. Record a Transaction (Credit/Collection)
-app.post('/api/transactions', (req, res) => {
+app.post('/api/transactions', async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
     const { customerId, amount, type, description, date, aliasSpoken } = req.body;
@@ -236,7 +236,7 @@ app.post('/api/transactions', (req, res) => {
     if (type !== 'credit' && type !== 'collection') {
       return res.status(400).json({ error: "type must be 'credit' or 'collection'" });
     }
-    const result = addTransaction({ customerId, amount, type, description, date, aliasSpoken, merchantId });
+    const result = await addTransaction({ customerId, amount, type, description, date, aliasSpoken, merchantId });
     res.status(201).json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -252,12 +252,12 @@ app.post('/api/voice/process', async (req, res) => {
       return res.status(400).json({ error: 'Transcript is required' });
     }
 
-    const customers = getCustomers(merchantId);
+    const customers = await getCustomers(merchantId);
     const extracted = await extractTransactionFromVoice(transcript, customers);
 
     // Lookups should use the standardized canonicalName
     if (extracted.canonicalName) {
-      let matches = findExistingCustomer(extracted.canonicalName, '', merchantId);
+      let matches = await findExistingCustomer(extracted.canonicalName, '', merchantId);
 
       // If local matches is empty, try Step 7: Gemini Semantic match fallback
       if (matches.length === 0) {
@@ -288,8 +288,8 @@ app.post('/api/voice/process', async (req, res) => {
           console.log(`[MATCHED] Voice transaction uniquely matched customer: "${match.name}" (ID: ${match.id})`);
           
           const { learnAlias } = await import('./db.js');
-          learnAlias(match.id, extracted.canonicalName);
-          learnAlias(match.id, extracted.name);
+          await learnAlias(match.id, extracted.canonicalName);
+          await learnAlias(match.id, extracted.name);
 
           return res.json({
             ...extracted,
@@ -347,7 +347,7 @@ app.get('/api/summary/daily', async (req, res) => {
     }
     
     // Otherwise, generate a new daily summary
-    const customers = getCustomers(merchantId, targetDate);
+    const customers = await getCustomers(merchantId, targetDate);
     
     // Safety fallback: if transaction lacks merchant_id, associate it by customer's merchant_id
     const customerMap = new Map((db.customers || []).map(c => [c.id, c]));
@@ -388,11 +388,11 @@ app.get('/api/summary/daily', async (req, res) => {
 });
 
 // 7. Get Reminders
-app.get('/api/reminders', (req, res) => {
+app.get('/api/reminders', async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
     const dateStr = req.query.date; // YYYY-MM-DD
-    const reminders = getReminders(merchantId, dateStr);
+    const reminders = await getReminders(merchantId, dateStr);
     res.json(reminders);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -400,10 +400,8 @@ app.get('/api/reminders', (req, res) => {
 });
 
 // Start Server
-syncFromSupabase().then(() => {
-  mergeDuplicateCustomers();
-  
-  app.listen(PORT, () => {
-    console.log(`Express server running on http://localhost:${PORT}`);
-  });
+mergeDuplicateCustomers();
+
+app.listen(PORT, () => {
+  console.log(`Express server running on http://localhost:${PORT}`);
 });

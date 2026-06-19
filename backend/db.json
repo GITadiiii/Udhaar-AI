@@ -11,9 +11,60 @@
       "name": "Test Merchant",
       "business_name": "Test Business",
       "phone": "1234567890"
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000008",
+      "name": "Test User",
+      "business_name": "Test",
+      "phone": "1234567895"
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "Default Merchant",
+      "business_name": "Default Store",
+      "phone": "0000000000"
     }
   ],
-  "customers": [],
+  "customers": [
+    {
+      "id": "cust_7c850e35",
+      "merchant_id": "00000000-0000-0000-0000-000000000001",
+      "name": "Ee Customer",
+      "displayName": "Ee Customer",
+      "alias": "Ee",
+      "normalizedName": "eecustomer",
+      "aliases": [
+        "E2E Customer 5319",
+        "Ee Customer",
+        "ee customer",
+        "eecustomer",
+        "Ee",
+        "ee"
+      ],
+      "phone": "+91999995319",
+      "created_at": "2026-06-19T07:53:23.202Z",
+      "deleted": true
+    },
+    {
+      "id": "cust_d1f0126e",
+      "merchant_id": "00000000-0000-0000-0000-000000000001",
+      "name": "Ee Customer",
+      "displayName": "Ee Customer",
+      "alias": "Ee",
+      "normalizedName": "eecustomer",
+      "aliases": [
+        "E2E Customer 3697",
+        "Ee Customer",
+        "ee customer",
+        "eecustomer",
+        "Ee",
+        "ee"
+      ],
+      "phone": "+91999993697",
+      "created_at": "2026-06-19T08:03:59.864Z",
+      "deleted": true
+    }
+  ],
   "transactions": [],
   "outstanding_balances": [],
   "reminders": [],
