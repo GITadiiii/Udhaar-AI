@@ -122,18 +122,19 @@ let cachedModelName = null;
 
 async function getBestModel(genAI) {
   if (cachedModelName) {
-    return genAI.getGenerativeModel({ model: cachedModelName }, { apiVersion: 'v1' });
+    return genAI.getGenerativeModel({ model: cachedModelName }, { apiVersion: 'v1beta' });
   }
 
   const candidateModels = [
+    'gemini-2.5-flash',
+    'gemini-flash-latest',
     'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-latest'
+    'gemini-1.5-flash'
   ];
 
   const testPromises = candidateModels.map(async (modelName) => {
     try {
-      const testModel = genAI.getGenerativeModel({ model: modelName }, { apiVersion: 'v1' });
+      const testModel = genAI.getGenerativeModel({ model: modelName }, { apiVersion: 'v1beta' });
       await withTimeout(testModel.generateContent('ping'), 1200);
       return modelName;
     } catch (err) {
@@ -145,11 +146,11 @@ async function getBestModel(genAI) {
     cachedModelName = await Promise.any(testPromises);
     console.log(`[GEMINI] Verified and cached model: ${cachedModelName}`);
   } catch (err) {
-    console.warn('[GEMINI] All candidate models failed to resolve. Using default gemini-1.5-flash');
-    cachedModelName = 'gemini-1.5-flash';
+    console.warn('[GEMINI] All candidate models failed to resolve. Using default gemini-2.5-flash');
+    cachedModelName = 'gemini-2.5-flash';
   }
 
-  return genAI.getGenerativeModel({ model: cachedModelName }, { apiVersion: 'v1' });
+  return genAI.getGenerativeModel({ model: cachedModelName }, { apiVersion: 'v1beta' });
 }
 
 /**
