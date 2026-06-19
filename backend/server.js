@@ -18,7 +18,8 @@ import {
   getLevenshteinDistance,
   getLocalDateStr,
   getTodayStr,
-  syncFromSupabase
+  syncFromSupabase,
+  getTransactions
 } from './db.js';
 import { 
   extractTransactionFromVoice, 
@@ -83,6 +84,8 @@ app.use((req, res, next) => {
 
 // User/Merchant registration endpoint
 app.post('/api/users', async (req, res) => {
+  const startTime = Date.now();
+  console.log(`[REGISTRATION START] ID: ${req.body.id}, Name: ${req.body.name}, Phone: ${req.body.phone}`);
   try {
     const { id, name, businessName, phone } = req.body;
     if (!id || !name || !businessName) {
@@ -91,37 +94,86 @@ app.post('/api/users', async (req, res) => {
     
     const { addMerchant } = await import('./db.js');
     const result = await addMerchant({ id, name, business_name: businessName, phone });
+    console.log(`[REGISTRATION SUCCESS] in ${Date.now() - startTime}ms`);
     res.status(201).json(result);
   } catch (error) {
+    console.error(`[REGISTRATION FAILURE] ${error.message} in ${Date.now() - startTime}ms`);
     res.status(500).json({ error: error.message });
   }
 });
 
 // 1. Get Customers (includes outstanding balance)
 app.get('/api/customers', async (req, res) => {
+  const startTime = Date.now();
+  const merchantId = getMerchantId(req);
+  console.log(`[DASHBOARD REFRESH START] Get Customers. Merchant: ${merchantId}`);
   try {
-    const merchantId = getMerchantId(req);
     const dateStr = req.query.date; // YYYY-MM-DD
     const customers = await getCustomers(merchantId, dateStr);
+    console.log(`[DASHBOARD REFRESH SUCCESS] Get Customers. Merchant: ${merchantId} in ${Date.now() - startTime}ms`);
     res.json(customers);
   } catch (error) {
+    console.error(`[DASHBOARD REFRESH FAILURE] Get Customers. Merchant: ${merchantId} Error: ${error.message} in ${Date.now() - startTime}ms`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get All Transactions for Merchant
+app.get('/api/transactions', async (req, res) => {
+  const startTime = Date.now();
+  const merchantId = getMerchantId(req);
+  console.log(`[DASHBOARD REFRESH START] Get Transactions. Merchant: ${merchantId}`);
+  try {
+    const dateStr = req.query.date; // YYYY-MM-DD
+    const transactions = await getTransactions(merchantId, dateStr);
+    console.log(`[DASHBOARD REFRESH SUCCESS] Get Transactions. Merchant: ${merchantId} in ${Date.now() - startTime}ms`);
+    res.json(transactions);
+  } catch (error) {
+    console.error(`[DASHBOARD REFRESH FAILURE] Get Transactions. Merchant: ${merchantId} Error: ${error.message} in ${Date.now() - startTime}ms`);
     res.status(500).json({ error: error.message });
   }
 });
 
 // 2. Add New Customer (with Canonical English standardization)
 app.post('/api/customers', async (req, res) => {
+  const startTime = Date.now();
+  const merchantId = getMerchantId(req);
+  const { name, phone, alias, confirmNew } = req.body;
+  
+  console.log(`[CUSTOMER CREATE START] Name: ${name}, Phone: ${phone || 'none'}, confirmNew: ${!!confirmNew}, Merchant: ${merchantId}`);
+  
   try {
-    const merchantId = getMerchantId(req);
-    const { name, phone, alias, confirmNew } = req.body;
     if (!name) {
       return res.status(400).json({ error: 'Customer name is required' });
     }
 
     const customers = await getCustomers(merchantId);
+
+    // If confirmNew is true, bypass slow Gemini lookup and check immediately
+    if (confirmNew) {
+      const { sanitizeCustomerName } = await import('./db.js');
+      const clean = sanitizeCustomerName(name);
+      const titleCased = clean.split(' ').map(w => w.charAt(0).toUpperCase() + w.substring(1)).join(' ');
+      
+      const customer = await addCustomer({ 
+        name: titleCased, 
+        phone, 
+        alias, 
+        aliases: [name], 
+        confirmNew: true, 
+        merchantId,
+        preloadedCustomers: customers
+      });
+      console.log(`[CUSTOMER INSERT SUCCESS] in ${Date.now() - startTime}ms`);
+      console.log(`[CUSTOMER RESPONSE SENT] in ${Date.now() - startTime}ms`);
+      console.log(`[TOTAL DURATION] customer creation total: ${Date.now() - startTime}ms`);
+      return res.status(201).json(customer);
+    }
+
+    // Standard flow (confirmNew is false)
     const canonicalName = await getCanonicalName(name, customers);
     const normCanonicalName = normalizeCustomerName(canonicalName);
-    const matches = await findExistingCustomer(canonicalName, phone, merchantId);
+    const matches = await findExistingCustomer(canonicalName, phone, merchantId, customers);
 
     // 1. Exact normalized name match: Always prevent duplication and return existing
     const exact = matches.find(m => normalizeCustomerName(m.name) === normCanonicalName);
@@ -131,11 +183,13 @@ app.post('/api/customers', async (req, res) => {
       const { learnAlias } = await import('./db.js');
       learnAlias(exact.id, name);
       
+      console.log(`[CUSTOMER RESPONSE SENT] in ${Date.now() - startTime}ms`);
+      console.log(`[TOTAL DURATION] customer creation total: ${Date.now() - startTime}ms`);
       return res.json({ ...exact, was_existing: true });
     }
 
-    // 2. Step 7: Try Gemini semantic matching if local matches is empty and confirmNew is false
-    if (matches.length === 0 && !confirmNew) {
+    // 2. Step 7: Try Gemini semantic matching if local matches is empty
+    if (matches.length === 0) {
       const semanticMatchedId = await resolveSemanticMatch(canonicalName, customers);
       if (semanticMatchedId) {
         const matchedCust = customers.find(c => c.id === semanticMatchedId);
@@ -146,24 +200,40 @@ app.post('/api/customers', async (req, res) => {
           learnAlias(matchedCust.id, canonicalName);
           learnAlias(matchedCust.id, name);
           
+          console.log(`[CUSTOMER RESPONSE SENT] in ${Date.now() - startTime}ms`);
+          console.log(`[TOTAL DURATION] customer creation total: ${Date.now() - startTime}ms`);
           return res.json({ ...matchedCust, was_existing: true });
         }
       }
     }
 
     // 3. Multiple matches or fuzzy matches found: return candidate list for smart resolution
-    if (matches.length > 0 && !confirmNew) {
+    if (matches.length > 0) {
       console.log(`[LOOKUP] Matches found for new customer request canonical name "${canonicalName}": [${matches.map(m => m.name).join(', ')}]. Prompting smart resolution.`);
+      console.log(`[CUSTOMER RESPONSE SENT] in ${Date.now() - startTime}ms`);
+      console.log(`[TOTAL DURATION] customer creation total: ${Date.now() - startTime}ms`);
       return res.json({
         status: 'multiple_matches',
         candidates: matches
       });
     }
 
-    // 4. No matches or merchant explicitly confirmed creation
-    const customer = await addCustomer({ name: canonicalName, phone, alias, aliases: [name], confirmNew, merchantId });
+    // 4. No matches - insert customer
+    const customer = await addCustomer({ 
+      name: canonicalName, 
+      phone, 
+      alias, 
+      aliases: [name], 
+      confirmNew: false, 
+      merchantId,
+      preloadedCustomers: customers
+    });
+    console.log(`[CUSTOMER INSERT SUCCESS] in ${Date.now() - startTime}ms`);
+    console.log(`[CUSTOMER RESPONSE SENT] in ${Date.now() - startTime}ms`);
+    console.log(`[TOTAL DURATION] customer creation total: ${Date.now() - startTime}ms`);
     res.status(201).json(customer);
   } catch (error) {
+    console.error(`[CUSTOMER CREATE FAILURE] ${error.message} in ${Date.now() - startTime}ms`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -213,15 +283,20 @@ app.put('/api/customers/:id', async (req, res) => {
 
 // Delete Customer (and cleanup associated records)
 app.delete('/api/customers/:id', async (req, res) => {
+  const startTime = Date.now();
+  const merchantId = getMerchantId(req);
+  const { id } = req.params;
+  console.log(`[CUSTOMER DELETE START] ID: ${id}, Merchant: ${merchantId}`);
   try {
-    const merchantId = getMerchantId(req);
-    const { id } = req.params;
     const success = await deleteCustomer(id, merchantId);
     if (!success) {
+      console.log(`[CUSTOMER DELETE FAILED] ID: ${id} not found in ${Date.now() - startTime}ms`);
       return res.status(404).json({ error: 'Customer not found' });
     }
+    console.log(`[CUSTOMER DELETE SUCCESS] in ${Date.now() - startTime}ms`);
     res.json({ status: 'success', message: 'Customer deleted successfully' });
   } catch (error) {
+    console.error(`[CUSTOMER DELETE FAILURE] ${error.message} in ${Date.now() - startTime}ms`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -464,7 +539,17 @@ async function startServer() {
     console.log('ℹ️ Supabase integration is disabled or credentials not provided. Running in local db.json-only fallback mode.');
   }
 
-  mergeDuplicateCustomers();
+  // Run merge duplicate customers scanner asynchronously in background
+  setTimeout(() => {
+    console.log('[STARTUP] Running background merge duplicate customers scanner...');
+    try {
+      mergeDuplicateCustomers();
+      console.log('[STARTUP] Background merge duplicate customers scanner completed.');
+    } catch (err) {
+      console.error('[STARTUP ERROR] Background merge duplicate customers failed:', err.message);
+    }
+  }, 1000);
+
   app.listen(PORT, () => {
     console.log(`Express server running on http://localhost:${PORT}`);
   });

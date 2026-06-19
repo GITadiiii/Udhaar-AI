@@ -100,6 +100,24 @@ async function importSanitizeCustomerName(name) {
   }
 }
 
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Timeout after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (res) => {
+        clearTimeout(timer);
+        resolve(res);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 /**
  * Wraps Gemini API calls with round-robin load balancing and automatic failover
  */
@@ -109,8 +127,9 @@ export async function callWithGemini(operation) {
     throw new Error('No Gemini API keys configured.');
   }
 
+  const maxAttempts = Math.min(apiKeys.length, 2);
   let attempts = 0;
-  while (attempts < apiKeys.length) {
+  while (attempts < maxAttempts) {
     // Ensure index is in bounds
     if (currentKeyIndex >= apiKeys.length) {
       currentKeyIndex = 0;
@@ -124,7 +143,7 @@ export async function callWithGemini(operation) {
     try {
       console.log(`[GEMINI] Using key index ${idx} (Key: ${maskedKey})`);
       const genAI = new GoogleGenerativeAI(apiKey);
-      const result = await operation(genAI);
+      const result = await withTimeout(operation(genAI), 1500);
       // Success: advance pointer for next request
       currentKeyIndex = (currentKeyIndex + 1) % apiKeys.length;
       return result;

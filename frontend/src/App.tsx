@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { fetchCustomers, fetchReminders, createCustomer, deleteCustomer, updateCustomer, fetchLedger, registerMerchant } from './utils/api';
+import { fetchCustomers, fetchReminders, fetchTransactions, createCustomer, deleteCustomer, updateCustomer, fetchLedger, registerMerchant } from './utils/api';
 import { Customer, Reminder, Transaction } from './types';
 import Dashboard from './components/Dashboard';
 import Customers from './components/Customers';
@@ -133,23 +133,14 @@ export default function App() {
   const loadData = async (dateStr?: string) => {
     const targetDate = dateStr || selectedDate;
     try {
-      const custData = await fetchCustomers(targetDate);
+      const [custData, remData, txData] = await Promise.all([
+        fetchCustomers(targetDate),
+        fetchReminders(targetDate),
+        fetchTransactions(targetDate)
+      ]);
       setCustomers(custData);
-      
-      const remData = await fetchReminders(targetDate);
       setReminders(remData);
-
-      // Rebuild client transaction list from ledgers
-      const allTxs: Transaction[] = [];
-      for (const cust of custData) {
-        try {
-          const ledger = await fetchLedger(cust.id, targetDate);
-          allTxs.push(...ledger.transactions);
-        } catch (e) {
-          console.error(`Failed to fetch ledger for customer ${cust.id}:`, e);
-        }
-      }
-      setTransactions(allTxs);
+      setTransactions(txData);
     } catch (err) {
       console.error('Failed to sync database:', err);
     } finally {

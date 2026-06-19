@@ -55,6 +55,7 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
   const [phone, setPhone] = useState('');
   const [alias, setAlias] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showWarning, setShowWarning] = useState(false);
 
   // Edit form state
   const [customerToEdit, setCustomerToEdit] = useState<Customer | null>(null);
@@ -120,6 +121,11 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
     if (!name.trim()) return;
     
     setLoading(true);
+    setShowWarning(false);
+    const timeoutId = setTimeout(() => {
+      setShowWarning(true);
+    }, 10000);
+
     try {
       await onAddCustomer({ name, phone, alias });
       setName('');
@@ -129,7 +135,9 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
     } catch (err) {
       console.error(err);
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
+      setShowWarning(false);
     }
   };
 
@@ -191,7 +199,10 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
         </div>
         <button
           id="add-customer-trigger"
-          onClick={() => setIsAddModalOpen(true)}
+          onClick={() => {
+            setIsAddModalOpen(true);
+            setShowWarning(false);
+          }}
           className="flex items-center gap-2 bg-brand-green hover:bg-green-700 text-white font-semibold px-5 py-3 rounded-xl shadow-soft hover:shadow-premium transition-all duration-300"
         >
           <UserPlus size={18} />
@@ -491,7 +502,10 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
           <div className="bg-brand-card border border-brand-gray-200 rounded-card w-full max-w-md p-6 shadow-premium relative animate-in fade-in zoom-in duration-200">
             <button
               id="close-add-customer-btn"
-              onClick={() => setIsAddModalOpen(false)}
+              onClick={() => {
+                setIsAddModalOpen(false);
+                setShowWarning(false);
+              }}
               className="absolute right-4 top-4 p-1.5 hover:bg-brand-gray-100 rounded-xl text-brand-gray-500 transition-colors"
             >
               <X size={20} />
@@ -545,10 +559,20 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
                 </div>
               </div>
 
+              {showWarning && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs font-semibold flex items-start gap-2 animate-in fade-in duration-300">
+                  <AlertTriangle size={16} className="shrink-0 text-amber-600 mt-0.5" />
+                  <span>The server is waking up. This first request may take up to 50 seconds on Render free tier. Please wait...</span>
+                </div>
+              )}
+
               <div className="pt-4 flex gap-4">
                 <button
                   type="button"
-                  onClick={() => setIsAddModalOpen(false)}
+                  onClick={() => {
+                    setIsAddModalOpen(false);
+                    setShowWarning(false);
+                  }}
                   className="flex-1 border border-brand-gray-200 hover:bg-brand-gray-50 text-brand-gray-700 font-semibold py-3 rounded-xl transition-colors"
                 >
                   Cancel

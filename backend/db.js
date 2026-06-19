@@ -284,14 +284,14 @@ export function areNamesDistinct(name1, name2) {
  * Finds existing customer based on normalized names, phone, aliases, or fuzzy matching.
  * Returns array of matches.
  */
-export function findExistingCustomer(nameOrId, phone = '', merchantId) {
+export function findExistingCustomer(nameOrId, phone = '', merchantId, preloadedCustomers) {
   const targetMerchantId = merchantId || 'merchant_1';
   if (process.env.DISABLE_SUPABASE_SYNC === 'true' || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-    return findExistingCustomerLocal(nameOrId, phone, targetMerchantId);
+    return findExistingCustomerLocal(nameOrId, phone, targetMerchantId, preloadedCustomers);
   }
   
   return (async () => {
-    const customers = await getCustomers(targetMerchantId);
+    const customers = preloadedCustomers || await getCustomers(targetMerchantId);
     if (!nameOrId) return [];
 
     const normPhone = phone ? phone.replace(/\D/g, '') : '';
@@ -422,10 +422,10 @@ export function findExistingCustomer(nameOrId, phone = '', merchantId) {
   })();
 }
 
-function findExistingCustomerLocal(nameOrId, phone = '', merchantId) {
+function findExistingCustomerLocal(nameOrId, phone = '', merchantId, preloadedCustomers) {
   const db = readDb();
   const targetMerchantId = merchantId || 'merchant_1';
-  const customers = getCustomersLocal(targetMerchantId);
+  const customers = preloadedCustomers || getCustomersLocal(targetMerchantId);
   if (!nameOrId) return [];
 
   const normPhone = phone ? phone.replace(/\D/g, '') : '';
@@ -945,6 +945,66 @@ function getCustomersLocal(merchantId, dateStr) {
     });
 }
 
+export function getTransactions(merchantId, dateStr) {
+  const targetMerchantId = merchantId || 'merchant_1';
+  if (process.env.DISABLE_SUPABASE_SYNC === 'true' || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    return getTransactionsLocal(targetMerchantId, dateStr);
+  }
+  
+  return (async () => {
+    try {
+      const { supabase } = await import('./supabase.js');
+      const merchantUuid = toUUID(targetMerchantId);
+      let query = supabase.from('transactions').select('*').eq('merchant_id', merchantUuid);
+      if (dateStr) {
+        query = query.lte('date', new Date(dateStr + 'T23:59:59.999Z').toISOString());
+      }
+      const { data: txs, error: tErr } = await query;
+      if (tErr) throw tErr;
+      
+      return (txs || []).map(t => {
+        let description = t.description;
+        let originalTxId = t.id;
+        let originalCustomerId = t.customer_id;
+        if (t.description && t.description.startsWith('{') && t.description.endsWith('}')) {
+          try {
+            const extra = JSON.parse(t.description);
+            description = extra.description || t.description;
+            originalTxId = extra.original_id || t.id;
+            originalCustomerId = extra.original_customer_id || t.customer_id;
+          } catch (e) {}
+        }
+        return {
+          id: originalTxId,
+          merchant_id: targetMerchantId,
+          customer_id: originalCustomerId,
+          amount: parseFloat(t.amount),
+          type: t.type,
+          description,
+          date: t.date
+        };
+      }).sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime());
+    } catch (err) {
+      console.error('[SUPABASE READ ERROR] Transactions query failed:', err.message);
+      throw err;
+    }
+  })();
+}
+
+function getTransactionsLocal(merchantId, dateStr) {
+  const db = readDb();
+  const targetMerchantId = merchantId || 'merchant_1';
+  const targetDate = dateStr ? dateStr.slice(0, 10) : null;
+  
+  return (db.transactions || [])
+    .filter(t => {
+      if ((t.merchant_id || 'merchant_1') !== targetMerchantId) return false;
+      if (targetDate && getLocalDateStr(t.date) > targetDate) return false;
+      return true;
+    })
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+}
+
 async function deleteSummaryFromSupabase(merchantId, dateStr) {
   if (process.env.DISABLE_SUPABASE_SYNC === 'true') return;
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) return;
@@ -994,17 +1054,17 @@ export function invalidateSpecificSummary(db, merchantId, dateStr) {
   });
 }
 
-export function addCustomer({ name, phone, alias, aliases, confirmNew = false, merchantId }) {
+export function addCustomer({ name, phone, alias, aliases, confirmNew = false, merchantId, preloadedCustomers }) {
   const targetMerchantId = merchantId || 'merchant_1';
   if (process.env.DISABLE_SUPABASE_SYNC === 'true' || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-    return addCustomerLocal({ name, phone, alias, aliases, confirmNew, merchantId: targetMerchantId });
+    return addCustomerLocal({ name, phone, alias, aliases, confirmNew, merchantId: targetMerchantId, preloadedCustomers });
   }
   
   return (async () => {
     try {
       const sanitizedName = sanitizeCustomerName(name);
       
-      const existingCustomers = await getCustomers(targetMerchantId);
+      const existingCustomers = preloadedCustomers || await getCustomers(targetMerchantId);
       const norm = getNormalizedNameIdentifier(sanitizedName);
       const normPhone = phone ? phone.replace(/\D/g, '') : '';
       
@@ -1112,7 +1172,7 @@ export function addCustomer({ name, phone, alias, aliases, confirmNew = false, m
   })();
 }
 
-function addCustomerLocal({ name, phone, alias, aliases, confirmNew = false, merchantId }) {
+function addCustomerLocal({ name, phone, alias, aliases, confirmNew = false, merchantId, preloadedCustomers }) {
   const db = readDb();
   const targetMerchantId = merchantId || 'merchant_1';
   
@@ -1128,7 +1188,8 @@ function addCustomerLocal({ name, phone, alias, aliases, confirmNew = false, mer
   };
 
   if (!confirmNew) {
-    const existing = db.customers.find(c => 
+    const customersList = preloadedCustomers || db.customers;
+    const existing = customersList.find(c => 
       !c.deleted &&
       (c.merchant_id || 'merchant_1') === targetMerchantId &&
       !hasDifferentPhone(c) && 
@@ -2229,6 +2290,7 @@ export async function syncFromSupabase() {
     return;
   }
 
+  const startTime = Date.now();
   try {
     console.log('[SUPABASE SYNC] Fetching remote state from Supabase...');
     const { supabase } = await import('./supabase.js');
@@ -2417,9 +2479,9 @@ export async function syncFromSupabase() {
     }
 
     fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), 'utf-8');
-    console.log(`[SUPABASE SYNC] Successfully loaded cloud state into local db.json.`);
+    console.log(`[SUPABASE SYNC] Successfully loaded cloud state into local db.json in ${Date.now() - startTime}ms.`);
   } catch (err) {
-    console.error('[SUPABASE SYNC ERROR] Initial sync failed:', err.message);
+    console.error(`[SUPABASE SYNC ERROR] Initial sync failed: ${err.message} in ${Date.now() - startTime}ms.`);
   }
 }
 
@@ -2427,6 +2489,7 @@ export async function syncToSupabase(db) {
   if (process.env.DISABLE_SUPABASE_SYNC === 'true') return;
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) return;
 
+  const startTime = Date.now();
   try {
     const { supabase } = await import('./supabase.js');
 
@@ -2542,9 +2605,9 @@ export async function syncToSupabase(db) {
       if (rErr) throw rErr;
     }
 
-    console.log('[SUPABASE SYNC] Successfully updated cloud state on Supabase.');
+    console.log(`[SUPABASE SYNC] Successfully updated cloud state on Supabase in ${Date.now() - startTime}ms.`);
   } catch (err) {
-    console.error('[SUPABASE SYNC ERROR] Failed to upsert state:', err.message);
+    console.error(`[SUPABASE SYNC ERROR] Failed to upsert state: ${err.message} in ${Date.now() - startTime}ms.`);
   }
 }
 
