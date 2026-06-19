@@ -408,7 +408,7 @@ export async function extractTransactionFromVoice(transcript, customers) {
 
   try {
     return await callWithGemini(async (genAI) => {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }, { apiVersion: 'v1' });
       
       const customerListString = customers.map(c => 
         `ID: ${c.id}, Name: ${c.name}, Aliases: [${(c.aliases || []).join(', ')}]`
@@ -539,7 +539,7 @@ Suggested action: Review pending reminders and send payment follow-ups today.`;
 
   try {
     return await callWithGemini(async (genAI) => {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }, { apiVersion: 'v1' });
       
       const customerDetails = customers.map(c => `- ${c.name} (Balance: ₹${c.balance})`).join('\n');
       const txDetails = todayTxs.map(t => {
@@ -590,7 +590,7 @@ export async function resolveSemanticMatch(queryName, customers) {
 
   try {
     return await callWithGemini(async (genAI) => {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }, { apiVersion: 'v1' });
       
       const customerListString = customers.map(c => 
         `ID: ${c.id}, Name: ${c.name}, Aliases: [${(c.aliases || []).join(', ')}]`
@@ -653,7 +653,7 @@ export async function getCanonicalName(name, customers) {
 
   try {
     return await callWithGemini(async (genAI) => {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }, { apiVersion: 'v1' });
       const customerNames = customers.map(c => c.name).join(', ');
       
       const prompt = `
