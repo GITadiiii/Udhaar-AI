@@ -19,7 +19,8 @@ import {
   getLocalDateStr,
   getTodayStr,
   syncFromSupabase,
-  getTransactions
+  getTransactions,
+  toUUID
 } from './db.js';
 import { 
   extractTransactionFromVoice, 
@@ -431,22 +432,43 @@ app.get('/api/summary/daily', async (req, res) => {
     const db = readDb();
     
     // Check if daily summary is already cached
-    const existingSummary = (db.daily_summaries || []).find(
-      s => s.date === targetDate && (s.merchant_id || 'merchant_1') === merchantId
-    );
+    let existingSummary = null;
+    if (process.env.DISABLE_SUPABASE_SYNC !== 'true' && process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
+      try {
+        const { supabase } = await import('./supabase.js');
+        const summaryUuid = toUUID(`${merchantId}_${targetDate}`);
+        const { data, error } = await supabase
+          .from('daily_summaries')
+          .select('*')
+          .eq('id', summaryUuid)
+          .maybeSingle();
+        if (!error && data) {
+          existingSummary = {
+            date: data.date,
+            merchant_id: merchantId,
+            credit_given: parseFloat(data.credit_given),
+            collections: parseFloat(data.collections),
+            net_change: parseFloat(data.net_change),
+            summary_text: data.summary_text,
+            created_at: data.created_at
+          };
+        }
+      } catch (e) {
+        console.error('[SUPABASE] Failed to fetch cached summary:', e.message);
+      }
+    } else {
+      existingSummary = (db.daily_summaries || []).find(
+        s => s.date === targetDate && (s.merchant_id || 'merchant_1') === merchantId
+      );
+    }
+    
     if (existingSummary) {
       return res.json(existingSummary);
     }
     
     // Otherwise, generate a new daily summary
+    const merchantTransactions = await getTransactions(merchantId, targetDate);
     const customers = await getCustomers(merchantId, targetDate);
-    
-    // Safety fallback: if transaction lacks merchant_id, associate it by customer's merchant_id
-    const customerMap = new Map((db.customers || []).map(c => [c.id, c]));
-    const merchantTransactions = (db.transactions || []).filter(t => {
-      const txMerchantId = t.merchant_id || customerMap.get(t.customer_id)?.merchant_id || 'merchant_1';
-      return txMerchantId === merchantId;
-    });
     
     const summaryText = await generateDailySummary(targetDate, merchantTransactions, customers);
     
@@ -455,6 +477,15 @@ app.get('/api/summary/daily', async (req, res) => {
     const creditGiven = todayTxs.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount, 0);
     const collections = todayTxs.filter(t => t.type === 'collection').reduce((sum, t) => sum + t.amount, 0);
     const netChange = creditGiven - collections;
+
+    console.log(`[AI SUMMARY GENERATION]
+      Merchant ID: ${merchantId}
+      Selected Date: ${targetDate}
+      Transaction Count: ${todayTxs.length}
+      Credit Total: ₹${creditGiven}
+      Collection Total: ₹${collections}
+      Outstanding Total: ₹${customers.reduce((sum, c) => sum + c.balance, 0)}
+    `);
 
     const newSummary = {
       date: targetDate,
@@ -530,6 +561,8 @@ async function startServer() {
         process.exit(1);
       } else {
         console.log('✅ Supabase Schema Validation Passed: All tables and columns match.');
+        console.log('[STARTUP] Syncing database state from Supabase...');
+        await syncFromSupabase();
       }
     } catch (validationErr) {
       console.error('❌ Failed to connect/validate Supabase schema:', validationErr.message);
