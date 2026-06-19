@@ -2583,7 +2583,7 @@ export async function syncToSupabase(db) {
       };
     });
     if (summariesToUpsert.length > 0) {
-      const { error: sErr } = await supabase.from('daily_summaries').upsert(summariesToUpsert);
+      const { error: sErr } = await supabase.from('daily_summaries').upsert(summariesToUpsert, { onConflict: 'merchant_id,date' });
       if (sErr) throw sErr;
     }
 

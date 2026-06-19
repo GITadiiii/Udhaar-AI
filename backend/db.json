@@ -1,6 +1,48 @@
 {
   "users": [
     {
+      "id": "merchant_gi2gaohww",
+      "name": "rajat",
+      "business_name": "kirana",
+      "phone": "6573756356"
+    },
+    {
+      "id": "merchant_a3t6g8eek",
+      "name": "omkar",
+      "business_name": "soni general store",
+      "phone": "9608542005"
+    },
+    {
+      "id": "merchant_mnpyc83ru",
+      "name": "ram",
+      "business_name": "kirana",
+      "phone": "6573674785"
+    },
+    {
+      "id": "merchant_dz3fs3c70",
+      "name": "dhriti",
+      "business_name": "d.k kirana",
+      "phone": "7890658689"
+    },
+    {
+      "id": "merchant_pp96i3ttr",
+      "name": "arav",
+      "business_name": "kirana",
+      "phone": "6573674790"
+    },
+    {
+      "id": "merchant_57rtuwycc",
+      "name": "Y8d9",
+      "business_name": "Kirana ",
+      "phone": "9378907845"
+    },
+    {
+      "id": "merchant_57amrq7ue",
+      "name": "Pandey",
+      "business_name": "General stirw",
+      "phone": "9997393536"
+    },
+    {
       "id": "75fd2010-34d4-430e-bba3-83227c03bf20",
       "name": "Test User",
       "business_name": "Test Shop",
@@ -32,6 +74,8 @@
       "name": "Ee Customer",
       "displayName": "Ee Customer",
       "alias": "Ee",
+      "phone": "+91999995319",
+      "created_at": "2026-06-19T07:53:23.202+00:00",
       "normalizedName": "eecustomer",
       "aliases": [
         "E2E Customer 5319",
@@ -41,8 +85,6 @@
         "Ee",
         "ee"
       ],
-      "phone": "+91999995319",
-      "created_at": "2026-06-19T07:53:23.202Z",
       "deleted": true
     },
     {
@@ -51,6 +93,8 @@
       "name": "Ee Customer",
       "displayName": "Ee Customer",
       "alias": "Ee",
+      "phone": "+91999993697",
+      "created_at": "2026-06-19T08:03:59.864+00:00",
       "normalizedName": "eecustomer",
       "aliases": [
         "E2E Customer 3697",
@@ -60,13 +104,339 @@
         "Ee",
         "ee"
       ],
-      "phone": "+91999993697",
-      "created_at": "2026-06-19T08:03:59.864Z",
       "deleted": true
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "merchant_id": "00000000-0000-0000-0000-000000000000",
+      "name": "Test",
+      "displayName": "Test",
+      "alias": "{\"alias\":null,\"aliases\":[\"Test\"],\"normalizedName\":\"test\",\"deleted\":false,\"original_id\":\"00000000-0000-0000-0000-000000000000\",\"original_merchant_id\":\"00000000-0000-0000-0000-000000000000\"}",
+      "phone": null,
+      "created_at": "2026-06-19T08:43:12.469645+00:00",
+      "normalizedName": "test",
+      "aliases": [
+        "Test"
+      ],
+      "deleted": false
+    },
+    {
+      "id": "cust_99d927cc",
+      "merchant_id": "merchant_pp96i3ttr",
+      "name": "Divya",
+      "displayName": "Divya",
+      "alias": "Dev",
+      "phone": null,
+      "created_at": "2026-06-19T11:55:25.906+00:00",
+      "normalizedName": "divya",
+      "aliases": [
+        "dev",
+        "Dev",
+        "Divya",
+        "divya"
+      ],
+      "deleted": false
+    },
+    {
+      "id": "cust_d11c92bd",
+      "merchant_id": "merchant_57rtuwycc",
+      "name": "Ranjan",
+      "displayName": "Ranjan",
+      "alias": "Ranjan",
+      "phone": null,
+      "created_at": "2026-06-19T12:17:25.698+00:00",
+      "normalizedName": "ranjan",
+      "aliases": [
+        "Ranjan",
+        "ranjan"
+      ],
+      "deleted": false
+    },
+    {
+      "id": "cust_cd882b8d",
+      "merchant_id": "merchant_57rtuwycc",
+      "name": "Raj",
+      "displayName": "Raj",
+      "alias": "Raj",
+      "phone": null,
+      "created_at": "2026-06-19T13:03:57.881+00:00",
+      "normalizedName": "raj",
+      "aliases": [
+        "Raj",
+        "raj"
+      ],
+      "deleted": false
+    },
+    {
+      "id": "cust_10611921",
+      "merchant_id": "merchant_dz3fs3c70",
+      "name": "Testing",
+      "displayName": "Testing",
+      "alias": "Testing",
+      "phone": null,
+      "created_at": "2026-06-19T17:08:05.663+00:00",
+      "normalizedName": "testing",
+      "aliases": [
+        "testing",
+        "Testing"
+      ],
+      "deleted": false
+    },
+    {
+      "id": "cust_dca35e52",
+      "merchant_id": "merchant_pp96i3ttr",
+      "name": "Xyz",
+      "displayName": "Xyz",
+      "alias": "Xyz",
+      "phone": null,
+      "created_at": "2026-06-19T16:02:43.885+00:00",
+      "normalizedName": "xyz",
+      "aliases": [
+        "xyz",
+        "Xyz"
+      ],
+      "deleted": false
+    },
+    {
+      "id": "cust_df60920b",
+      "merchant_id": "merchant_a3t6g8eek",
+      "name": "Omkar",
+      "displayName": "Omkar",
+      "alias": "Omkar",
+      "phone": "6207895212",
+      "created_at": "2026-06-19T16:26:36.972+00:00",
+      "normalizedName": "omkar",
+      "aliases": [
+        "omkar",
+        "Omkar"
+      ],
+      "deleted": false
+    },
+    {
+      "id": "cust_5ec556b5",
+      "merchant_id": "merchant_dz3fs3c70",
+      "name": "Yfuy",
+      "displayName": "Yfuy",
+      "alias": "Yfuy",
+      "phone": null,
+      "created_at": "2026-06-19T16:54:06.169+00:00",
+      "normalizedName": "yfuy",
+      "aliases": [
+        "yfuy",
+        "Yfuy"
+      ],
+      "deleted": false
+    },
+    {
+      "id": "cust_b5c14dcb",
+      "merchant_id": "merchant_dz3fs3c70",
+      "name": "Aakriti",
+      "displayName": "Aakriti",
+      "alias": "Aakriti",
+      "phone": null,
+      "created_at": "2026-06-19T17:06:12.359+00:00",
+      "normalizedName": "aakriti",
+      "aliases": [
+        "Aakriti",
+        "aakriti"
+      ],
+      "deleted": false
+    },
+    {
+      "id": "cust_5cee082f",
+      "merchant_id": "merchant_dz3fs3c70",
+      "name": "Raj",
+      "displayName": "Raj",
+      "alias": "Raj",
+      "phone": null,
+      "created_at": "2026-06-19T17:07:42.257+00:00",
+      "normalizedName": "raj",
+      "aliases": [
+        "Raj",
+        "raj"
+      ],
+      "deleted": false
+    },
+    {
+      "id": "cust_ccc5c0af",
+      "merchant_id": "merchant_57amrq7ue",
+      "name": "Rahul Thakur",
+      "displayName": "Rahul Thakur",
+      "alias": "Thakur",
+      "phone": "9976388737",
+      "created_at": "2026-06-19T17:57:06.782+00:00",
+      "normalizedName": "rahulthakur",
+      "aliases": [
+        "Rahul thakur",
+        "Rahul Thakur",
+        "rahul thakur",
+        "rahulthakur",
+        "Thakur",
+        "thakur"
+      ],
+      "deleted": false
     }
   ],
-  "transactions": [],
-  "outstanding_balances": [],
-  "reminders": [],
-  "daily_summaries": []
+  "transactions": [
+    {
+      "id": "tx_c1d27c7d",
+      "merchant_id": "merchant_57rtuwycc",
+      "customer_id": "cust_cd882b8d",
+      "amount": 200,
+      "type": "credit",
+      "description": "Voice: \"राज को 200 दिया\"",
+      "date": "2026-06-19T13:03:59.056+00:00"
+    },
+    {
+      "id": "tx_800a629a",
+      "merchant_id": "merchant_dz3fs3c70",
+      "customer_id": "cust_b5c14dcb",
+      "amount": 200,
+      "type": "credit",
+      "description": "Voice: \"आकृति को आईएस 200 दिया\"",
+      "date": "2026-06-19T17:06:15.103+00:00"
+    },
+    {
+      "id": "tx_e4a57547",
+      "merchant_id": "merchant_dz3fs3c70",
+      "customer_id": "cust_5cee082f",
+      "amount": 200,
+      "type": "credit",
+      "description": "Voice: \"मार्च को 200 दिया\"",
+      "date": "2026-06-19T17:07:43.393+00:00"
+    }
+  ],
+  "outstanding_balances": [
+    {
+      "customer_id": "00000000-0000-0000-0000-000000000000",
+      "merchant_id": "00000000-0000-0000-0000-000000000000",
+      "balance": 0,
+      "last_updated": "2026-06-19T08:43:12.469645+00:00"
+    },
+    {
+      "customer_id": "cust_99d927cc",
+      "merchant_id": "merchant_pp96i3ttr",
+      "balance": 0,
+      "last_updated": "2026-06-19T11:55:25.906+00:00"
+    },
+    {
+      "customer_id": "cust_d11c92bd",
+      "merchant_id": "merchant_57rtuwycc",
+      "balance": 0,
+      "last_updated": "2026-06-19T12:17:25.698+00:00"
+    },
+    {
+      "customer_id": "cust_cd882b8d",
+      "merchant_id": "merchant_57rtuwycc",
+      "balance": 200,
+      "last_updated": "2026-06-19T13:03:59.056+00:00"
+    },
+    {
+      "customer_id": "cust_10611921",
+      "merchant_id": "merchant_dz3fs3c70",
+      "balance": 0,
+      "last_updated": "2026-06-19T17:08:05.663+00:00"
+    },
+    {
+      "customer_id": "cust_dca35e52",
+      "merchant_id": "merchant_pp96i3ttr",
+      "balance": 0,
+      "last_updated": "2026-06-19T16:02:43.885+00:00"
+    },
+    {
+      "customer_id": "cust_df60920b",
+      "merchant_id": "merchant_a3t6g8eek",
+      "balance": 0,
+      "last_updated": "2026-06-19T16:26:36.972+00:00"
+    },
+    {
+      "customer_id": "cust_5ec556b5",
+      "merchant_id": "merchant_dz3fs3c70",
+      "balance": 0,
+      "last_updated": "2026-06-19T16:54:06.169+00:00"
+    },
+    {
+      "customer_id": "cust_b5c14dcb",
+      "merchant_id": "merchant_dz3fs3c70",
+      "balance": 200,
+      "last_updated": "2026-06-19T17:06:15.103+00:00"
+    },
+    {
+      "customer_id": "cust_5cee082f",
+      "merchant_id": "merchant_dz3fs3c70",
+      "balance": 200,
+      "last_updated": "2026-06-19T17:07:43.393+00:00"
+    },
+    {
+      "customer_id": "cust_ccc5c0af",
+      "merchant_id": "merchant_57amrq7ue",
+      "balance": 0,
+      "last_updated": "2026-06-19T17:57:06.782+00:00"
+    }
+  ],
+  "reminders": [
+    {
+      "id": "fc995b4f-c277-40fc-adcc-a063685565c1",
+      "merchant_id": "merchant_57rtuwycc",
+      "customer_id": "cust_cd882b8d",
+      "customer_name": "Raj",
+      "customer_phone": "",
+      "amount": 200,
+      "due_date": "2026-06-19T13:03:59.056+00:00",
+      "days_overdue": 0,
+      "priority": "Soft",
+      "status": "pending",
+      "created_at": "2026-06-19T19:45:47.429Z"
+    },
+    {
+      "id": "bf29f56f-53fc-4c52-ad37-a33c38b6b973",
+      "merchant_id": "merchant_dz3fs3c70",
+      "customer_id": "cust_b5c14dcb",
+      "customer_name": "Aakriti",
+      "customer_phone": "",
+      "amount": 200,
+      "due_date": "2026-06-19T17:06:15.103+00:00",
+      "days_overdue": 0,
+      "priority": "Soft",
+      "status": "pending",
+      "created_at": "2026-06-19T19:45:47.436Z"
+    },
+    {
+      "id": "fd52ed85-4f95-4342-aac4-170b324f1443",
+      "merchant_id": "merchant_dz3fs3c70",
+      "customer_id": "cust_b5c14dcb",
+      "customer_name": "Aakriti",
+      "customer_phone": "",
+      "amount": 200,
+      "due_date": "2026-06-19T17:06:15.103+00:00",
+      "days_overdue": 0,
+      "priority": "Soft",
+      "status": "pending",
+      "created_at": "2026-06-19T19:45:47.436Z"
+    },
+    {
+      "id": "b4695223-1fc6-4239-a6e3-c3e841f67c3d",
+      "merchant_id": "merchant_dz3fs3c70",
+      "customer_id": "cust_5cee082f",
+      "customer_name": "Raj",
+      "customer_phone": "",
+      "amount": 200,
+      "due_date": "2026-06-19T17:07:43.393+00:00",
+      "days_overdue": 0,
+      "priority": "Soft",
+      "status": "pending",
+      "created_at": "2026-06-19T19:45:47.436Z"
+    }
+  ],
+  "daily_summaries": [
+    {
+      "date": "2026-06-19",
+      "merchant_id": "00000000-0000-0000-0000-000000000000",
+      "credit_given": 0,
+      "collections": 0,
+      "net_change": 0,
+      "summary_text": "test",
+      "created_at": "2026-06-19T08:43:06.636134+00:00"
+    }
+  ]
 }

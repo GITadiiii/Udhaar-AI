@@ -15,18 +15,28 @@ const YEARS = [2023, 2024, 2025, 2026, 2027];
 
 const getTodayStr = () => {
   const localDate = new Date();
-  const year = localDate.getFullYear();
-  const month = String(localDate.getMonth() + 1).padStart(2, '0');
-  const day = String(localDate.getDate()).padStart(2, '0');
+  const offset = 5.5 * 60 * 60 * 1000; // IST offset
+  const istDate = new Date(localDate.getTime() + offset);
+  const year = istDate.getUTCFullYear();
+  const month = String(istDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(istDate.getUTCDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
 
 export default function DatePicker({ selectedDate, onChange }: DatePickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   
-  const parsedDate = new Date(selectedDate);
-  const initialMonth = isNaN(parsedDate.getTime()) ? new Date().getMonth() : parsedDate.getMonth();
-  const initialYear = isNaN(parsedDate.getTime()) ? new Date().getFullYear() : parsedDate.getFullYear();
+  const parts = selectedDate.split('-');
+  const initialYear = parts[0] ? Number(parts[0]) : (() => {
+    const d = new Date();
+    const ist = new Date(d.getTime() + 5.5 * 3600000);
+    return ist.getUTCFullYear();
+  })();
+  const initialMonth = parts[1] ? Number(parts[1]) - 1 : (() => {
+    const d = new Date();
+    const ist = new Date(d.getTime() + 5.5 * 3600000);
+    return ist.getUTCMonth();
+  })();
   
   const [currentMonth, setCurrentMonth] = useState(initialMonth);
   const [currentYear, setCurrentYear] = useState(initialYear);
@@ -34,10 +44,14 @@ export default function DatePicker({ selectedDate, onChange }: DatePickerProps) 
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const d = new Date(selectedDate);
-    if (!isNaN(d.getTime())) {
-      setCurrentMonth(d.getMonth());
-      setCurrentYear(d.getFullYear());
+    const parts = selectedDate.split('-');
+    if (parts.length === 3) {
+      const y = Number(parts[0]);
+      const m = Number(parts[1]) - 1;
+      if (!isNaN(y) && !isNaN(m)) {
+        setCurrentMonth(m);
+        setCurrentYear(y);
+      }
     }
   }, [selectedDate]);
 
@@ -150,8 +164,11 @@ export default function DatePicker({ selectedDate, onChange }: DatePickerProps) 
             onClick={() => {
               const today = getTodayStr();
               onChange(today);
-              setCurrentMonth(new Date().getMonth());
-              setCurrentYear(new Date().getFullYear());
+              const now = new Date();
+              const offset = 5.5 * 60 * 60 * 1000;
+              const istDate = new Date(now.getTime() + offset);
+              setCurrentMonth(istDate.getUTCMonth());
+              setCurrentYear(istDate.getUTCFullYear());
               setIsOpen(false);
             }}
             className="w-full mt-3 py-2 bg-brand-dark hover:bg-brand-gray-800 text-white rounded-xl font-bold text-xs transition-colors cursor-pointer"

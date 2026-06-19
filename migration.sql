@@ -89,6 +89,7 @@ ALTER TABLE daily_summaries
 ADD COLUMN IF NOT EXISTS merchant_id UUID REFERENCES users(id) ON DELETE CASCADE DEFAULT '00000000-0000-0000-0000-000000000000'::uuid;
 
 -- Drop and recreate constraint if needed to avoid conflicts
+ALTER TABLE daily_summaries DROP CONSTRAINT IF EXISTS daily_summaries_date_key;
 ALTER TABLE daily_summaries DROP CONSTRAINT IF EXISTS unique_merchant_date;
 ALTER TABLE daily_summaries ADD CONSTRAINT unique_merchant_date UNIQUE (merchant_id, date);
 

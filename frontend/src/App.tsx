@@ -12,9 +12,11 @@ import { LayoutDashboard, BookOpen, Mic, BellRing, Sparkles, Settings, LogOut, S
 
 const getTodayStr = () => {
   const localDate = new Date();
-  const year = localDate.getFullYear();
-  const month = String(localDate.getMonth() + 1).padStart(2, '0');
-  const day = String(localDate.getDate()).padStart(2, '0');
+  const offset = 5.5 * 60 * 60 * 1000; // IST offset
+  const istDate = new Date(localDate.getTime() + offset);
+  const year = istDate.getUTCFullYear();
+  const month = String(istDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(istDate.getUTCDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
 

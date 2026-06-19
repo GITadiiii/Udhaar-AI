@@ -154,7 +154,7 @@ async function runMigration() {
   });
 
   if (summariesToUpsert.length > 0) {
-    const { error: sErr } = await supabase.from('daily_summaries').upsert(summariesToUpsert);
+    const { error: sErr } = await supabase.from('daily_summaries').upsert(summariesToUpsert, { onConflict: 'merchant_id,date' });
     if (sErr) {
       console.error('Error migrating daily summaries:', sErr.message);
       process.exit(1);

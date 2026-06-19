@@ -118,6 +118,40 @@ function withTimeout(promise, ms) {
   });
 }
 
+let cachedModelName = null;
+
+async function getBestModel(genAI) {
+  if (cachedModelName) {
+    return genAI.getGenerativeModel({ model: cachedModelName }, { apiVersion: 'v1' });
+  }
+
+  const candidateModels = [
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-latest'
+  ];
+
+  const testPromises = candidateModels.map(async (modelName) => {
+    try {
+      const testModel = genAI.getGenerativeModel({ model: modelName }, { apiVersion: 'v1' });
+      await withTimeout(testModel.generateContent('ping'), 1200);
+      return modelName;
+    } catch (err) {
+      throw err;
+    }
+  });
+
+  try {
+    cachedModelName = await Promise.any(testPromises);
+    console.log(`[GEMINI] Verified and cached model: ${cachedModelName}`);
+  } catch (err) {
+    console.warn('[GEMINI] All candidate models failed to resolve. Using default gemini-1.5-flash');
+    cachedModelName = 'gemini-1.5-flash';
+  }
+
+  return genAI.getGenerativeModel({ model: cachedModelName }, { apiVersion: 'v1' });
+}
+
 /**
  * Wraps Gemini API calls with round-robin load balancing and automatic failover
  */
@@ -408,7 +442,7 @@ export async function extractTransactionFromVoice(transcript, customers) {
 
   try {
     return await callWithGemini(async (genAI) => {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }, { apiVersion: 'v1' });
+      const model = await getBestModel(genAI);
       
       const customerListString = customers.map(c => 
         `ID: ${c.id}, Name: ${c.name}, Aliases: [${(c.aliases || []).join(', ')}]`
@@ -539,7 +573,7 @@ Suggested action: Review pending reminders and send payment follow-ups today.`;
 
   try {
     return await callWithGemini(async (genAI) => {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }, { apiVersion: 'v1' });
+      const model = await getBestModel(genAI);
       
       const customerDetails = customers.map(c => `- ${c.name} (Balance: ₹${c.balance})`).join('\n');
       const txDetails = todayTxs.map(t => {
@@ -590,7 +624,7 @@ export async function resolveSemanticMatch(queryName, customers) {
 
   try {
     return await callWithGemini(async (genAI) => {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }, { apiVersion: 'v1' });
+      const model = await getBestModel(genAI);
       
       const customerListString = customers.map(c => 
         `ID: ${c.id}, Name: ${c.name}, Aliases: [${(c.aliases || []).join(', ')}]`
@@ -653,7 +687,7 @@ export async function getCanonicalName(name, customers) {
 
   try {
     return await callWithGemini(async (genAI) => {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }, { apiVersion: 'v1' });
+      const model = await getBestModel(genAI);
       const customerNames = customers.map(c => c.name).join(', ');
       
       const prompt = `

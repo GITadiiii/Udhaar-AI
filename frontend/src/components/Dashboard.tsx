@@ -37,9 +37,11 @@ const getLocalDateStr = (dateInput: string) => {
   if (!dateInput) return '';
   const dateObj = new Date(dateInput);
   if (isNaN(dateObj.getTime())) return '';
-  const year = dateObj.getFullYear();
-  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const day = String(dateObj.getDate()).padStart(2, '0');
+  const offset = 5.5 * 60 * 60 * 1000; // IST offset
+  const istDate = new Date(dateObj.getTime() + offset);
+  const year = istDate.getUTCFullYear();
+  const month = String(istDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(istDate.getUTCDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
 
