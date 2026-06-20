@@ -154,39 +154,59 @@ async function getBestModel(genAI) {
 }
 
 /**
- * Wraps Gemini API calls with round-robin load balancing and automatic failover
+ * Wraps Gemini API calls with round-robin load balancing, automatic failover, and retry logic
  */
-export async function callWithGemini(operation) {
+export async function callWithGemini(operation, timeoutMs = 3000, maxRetries) {
   const apiKeys = getApiKeys();
   if (apiKeys.length === 0) {
     throw new Error('No Gemini API keys configured.');
   }
 
-  const maxAttempts = Math.min(apiKeys.length, 2);
-  let attempts = 0;
-  while (attempts < maxAttempts) {
+  // If maxRetries is not explicitly provided:
+  // - If only 1 key is configured, retry 1 time (total 2 attempts) to handle transient errors
+  // - If multiple keys are configured, failover immediately to the next key (0 retries per key, total attempts = number of keys)
+  const retriesPerKey = maxRetries !== undefined ? maxRetries : (apiKeys.length > 1 ? 0 : 1);
+
+  for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
     // Ensure index is in bounds
     if (currentKeyIndex >= apiKeys.length) {
       currentKeyIndex = 0;
     }
-    const idx = currentKeyIndex;
+    const idx = (currentKeyIndex + keyIdx) % apiKeys.length;
     const apiKey = apiKeys[idx];
     const maskedKey = apiKey.length > 10
       ? apiKey.substring(0, 6) + '...' + apiKey.substring(apiKey.length - 4)
       : 'short_key';
 
-    try {
-      console.log(`[GEMINI] Using key index ${idx} (Key: ${maskedKey})`);
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const result = await withTimeout(operation(genAI), 1500);
-      // Success: advance pointer for next request
-      currentKeyIndex = (currentKeyIndex + 1) % apiKeys.length;
-      return result;
-    } catch (error) {
-      console.error(`[GEMINI ERROR] Key index ${idx} failed: ${error.message}`);
-      // Cycle to the next key and attempt again
-      currentKeyIndex = (currentKeyIndex + 1) % apiKeys.length;
-      attempts++;
+    let lastError = null;
+    let delay = 150; // Starting backoff delay in ms
+
+    for (let attempt = 0; attempt <= retriesPerKey; attempt++) {
+      const startTime = Date.now();
+      try {
+        console.log(`[GEMINI] Using key index ${idx} (Key: ${maskedKey}) - Attempt ${attempt + 1}/${retriesPerKey + 1}`);
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const result = await withTimeout(operation(genAI), timeoutMs);
+        
+        const duration = Date.now() - startTime;
+        console.log(`[GEMINI SUCCESS] Key index ${idx} succeeded in ${duration}ms`);
+        
+        // Success: save the current successful key index to start next time
+        currentKeyIndex = idx;
+        return result;
+      } catch (error) {
+        const duration = Date.now() - startTime;
+        const isTimeout = error.message.includes('Timeout');
+        console.error(`[GEMINI ERROR] Key index ${idx} attempt ${attempt + 1} failed in ${duration}ms: ${error.message} (Timeout: ${isTimeout})`);
+        
+        lastError = error;
+        
+        // If it's the last attempt for this key, don't wait
+        if (attempt < retriesPerKey) {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          delay *= 2;
+        }
+      }
     }
   }
 
@@ -522,7 +542,7 @@ Return ONLY a JSON object matching this schema (no markdown wrapping, no backtic
         matchedCustomer,
         isAiFallback: false
       };
-    });
+    }, 4000);
   } catch (error) {
     console.error('Gemini voice processing failed, using fallback:', error);
     return localParseVoice(transcript, customers);
@@ -607,7 +627,7 @@ Create a summary that matches this persona:
 
       const result = await model.generateContent(prompt);
       return result.response.text().trim();
-    });
+    }, 6000);
   } catch (error) {
     console.error('Gemini daily summary generation failed, using local engine output:', error);
     return defaultText;
@@ -669,7 +689,7 @@ Return ONLY a JSON response in the following schema:
       }
       
       return null;
-    });
+    }, 2000);
   } catch (error) {
     console.error('Gemini semantic lookup failed:', error);
     return null;
@@ -721,7 +741,7 @@ Return ONLY a JSON response in the following schema (no markdown, no backticks):
       const responseText = result.response.text();
       const parsed = JSON.parse(responseText.trim());
       return parsed.canonicalName;
-    });
+    }, 2000);
   } catch (error) {
     console.error('Failed to generate canonical name with Gemini:', error);
     const transliterated = await importTransliterateHindi(name);

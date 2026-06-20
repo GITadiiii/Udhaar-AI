@@ -4,7 +4,7 @@ import { Customer, Transaction, Reminder, DailySummary, Ledger } from '../types'
 let rawApiUrl = import.meta.env.VITE_API_URL;
 
 if (!rawApiUrl) {
-  rawApiUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  rawApiUrl = import.meta.env.DEV && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? 'http://localhost:5000/api'
     : 'https://udhaar-ai.onrender.com/api';
 }
