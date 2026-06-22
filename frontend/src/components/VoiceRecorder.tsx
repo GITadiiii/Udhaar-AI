@@ -375,9 +375,9 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
         txResult.transaction
       );
       
+      handleDiscard();
       // Navigate to ledger on completion
       onNavigate('customers', { openLedgerId: customerId });
-      handleDiscard();
     } catch (err: any) {
       console.error(err);
       alert(`Error saving transaction: ${err.message || 'Please try again.'}`);

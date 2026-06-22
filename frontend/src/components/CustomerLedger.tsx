@@ -282,7 +282,7 @@ export default function CustomerLedger({ customerId, onBack, onBalanceChange, on
     );
   }
 
-  const { customer, transactions, reminders } = ledger;
+  const { customer, transactions = [], reminders = [] } = ledger;
   const hasDue = customer.balance > 0;
   
   // Format payment reminder text

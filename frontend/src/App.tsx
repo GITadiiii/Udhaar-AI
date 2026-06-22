@@ -260,7 +260,7 @@ export default function App() {
     loadData(selectedDate, true);
   };
 
-  const handleVoiceTransactionSaved = (newCustomer: Customer | null, customerId: string, newBalance: number, newTx: Transaction) => {
+  const handleVoiceTransactionSaved = (newCustomer: Customer | null, customerId: string, newBalance: number, newTx: Transaction | undefined) => {
     // 1. Invalidate caches
     clearCacheForDate(selectedDate);
     if (newCustomer) {
@@ -268,21 +268,26 @@ export default function App() {
     }
     clearLedgerCache(customerId);
 
+    const txDate = newTx?.date || new Date().toISOString();
+
     // 2. Update states
     if (newCustomer) {
       const formattedCust: Customer = {
         ...newCustomer,
         balance: newBalance,
-        last_updated: newTx.date,
+        last_updated: txDate,
         normalizedName: newCustomer.normalizedName || newCustomer.name.toLowerCase().replace(/\s+/g, ''),
         aliases: newCustomer.aliases || [newCustomer.name],
         deleted: false
       };
       setCustomers(prev => [...prev.filter(c => c.id !== newCustomer.id), formattedCust]);
     } else {
-      setCustomers(prev => prev.map(c => c.id === customerId ? { ...c, balance: newBalance, last_updated: newTx.date } : c));
+      setCustomers(prev => prev.map(c => c.id === customerId ? { ...c, balance: newBalance, last_updated: txDate } : c));
     }
-    setTransactions(prev => [...prev.filter(t => t.id !== newTx.id), newTx]);
+    
+    if (newTx?.id) {
+      setTransactions(prev => [...prev.filter(t => t.id !== newTx.id), newTx]);
+    }
 
     // 3. Trigger background refresh
     loadData(selectedDate, true);
