@@ -535,10 +535,11 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
                   id="new-customer-name"
                   type="text"
                   required
+                  disabled={loading}
                   placeholder="e.g. Rahul Mechanic"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full bg-brand-bg px-4 py-3 rounded-xl border border-brand-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent text-brand-dark"
+                  className="w-full bg-brand-bg px-4 py-3 rounded-xl border border-brand-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent text-brand-dark disabled:opacity-65"
                 />
               </div>
 
@@ -550,10 +551,11 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
                   <input
                     id="new-customer-alias"
                     type="text"
+                    disabled={loading}
                     placeholder="e.g. Rahul"
                     value={alias}
                     onChange={(e) => setAlias(e.target.value)}
-                    className="w-full bg-brand-bg px-4 py-3 rounded-xl border border-brand-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent text-brand-dark"
+                    className="w-full bg-brand-bg px-4 py-3 rounded-xl border border-brand-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent text-brand-dark disabled:opacity-65"
                   />
                 </div>
                 <div>
@@ -563,10 +565,11 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
                   <input
                     id="new-customer-phone"
                     type="text"
+                    disabled={loading}
                     placeholder="e.g. +9198765..."
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
-                    className="w-full bg-brand-bg px-4 py-3 rounded-xl border border-brand-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent text-brand-dark"
+                    className="w-full bg-brand-bg px-4 py-3 rounded-xl border border-brand-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent text-brand-dark disabled:opacity-65"
                   />
                 </div>
               </div>
@@ -581,12 +584,13 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
               <div className="pt-4 flex gap-4">
                 <button
                   type="button"
+                  disabled={loading}
                   onClick={() => {
                     setIsAddModalOpen(false);
                     setShowWarning(false);
                     setAddError('');
                   }}
-                  className="flex-1 border border-brand-gray-200 hover:bg-brand-gray-50 text-brand-gray-700 font-semibold py-3 rounded-xl transition-colors"
+                  className="flex-1 border border-brand-gray-200 hover:bg-brand-gray-50 text-brand-gray-700 font-semibold py-3 rounded-xl transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>

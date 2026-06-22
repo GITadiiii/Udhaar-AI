@@ -1190,8 +1190,9 @@ export function addCustomer({ name, phone, alias, aliases, confirmNew = false, m
       };
       
       const { supabase } = await import('./supabase.js');
+      const queryStart = Date.now();
       
-            console.log(`[CUSTOMER CREATE START]`);
+      console.log(`[CUSTOMER CREATE START]`);
       console.log(`Merchant ID: ${newCustomer.merchant_id}`);
       console.log(`Customer Name: ${newCustomer.name}`);
       console.log(`[CUSTOMER INSERT ATTEMPT]`);
