@@ -76,9 +76,13 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Log incoming requests
+// Log incoming requests and record performance metrics
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`[API LOG] ${req.method} ${req.originalUrl} - Status: ${res.statusCode} - Duration: ${duration}ms`);
+  });
   next();
 });
 
@@ -381,9 +385,9 @@ app.post('/api/voice/process', async (req, res) => {
     const customers = await getCustomers(merchantId);
     const extracted = await extractTransactionFromVoice(transcript, customers);
 
-    // Lookups should use the standardized canonicalName
+    // Lookups should use the standardized canonicalName, passing preloaded customers list to avoid duplicate DB reads
     if (extracted.canonicalName) {
-      let matches = await findExistingCustomer(extracted.canonicalName, '', merchantId);
+      let matches = await findExistingCustomer(extracted.canonicalName, '', merchantId, customers);
 
       // If local matches is empty, try Step 7: Gemini Semantic match fallback
       if (matches.length === 0) {
@@ -499,9 +503,11 @@ app.get('/api/summary/daily', async (req, res) => {
       return res.json(existingSummary);
     }
     
-    // Otherwise, generate a new daily summary
-    const merchantTransactions = await getTransactions(merchantId, targetDate);
-    const customers = await getCustomers(merchantId, targetDate);
+    // Otherwise, generate a new daily summary in parallel
+    const [merchantTransactions, customers] = await Promise.all([
+      getTransactions(merchantId, targetDate),
+      getCustomers(merchantId, targetDate)
+    ]);
     
     const summaryText = await generateDailySummary(targetDate, merchantTransactions, customers);
     

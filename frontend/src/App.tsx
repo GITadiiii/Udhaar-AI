@@ -1,5 +1,5 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
-import { fetchCustomers, fetchReminders, fetchTransactions, createCustomer, deleteCustomer, updateCustomer, fetchLedger, registerMerchant } from './utils/api';
+import { fetchCustomers, fetchReminders, fetchTransactions, createCustomer, deleteCustomer, updateCustomer, fetchLedger, registerMerchant, clearCacheForDate, clearLedgerCache } from './utils/api';
 import { Customer, Reminder, Transaction } from './types';
 import Dashboard from './components/Dashboard'; // Static load for instant first-paint
 import DatePicker from './components/DatePicker';
@@ -144,22 +144,90 @@ export default function App() {
     }
   };
 
-  const loadData = async (dateStr?: string) => {
+  const loadData = async (dateStr?: string, forceRefresh = false) => {
     const targetDate = dateStr || selectedDate;
+    
     try {
-      const [custData, remData, txData] = await Promise.all([
-        fetchCustomers(targetDate),
-        fetchReminders(targetDate),
-        fetchTransactions(targetDate)
+      // Step A: Load instantly from cache first (if exists)
+      const [cachedCust, cachedRem, cachedTx] = await Promise.all([
+        fetchCustomers(targetDate, false),
+        fetchReminders(targetDate, false),
+        fetchTransactions(targetDate, false)
       ]);
-      setCustomers(custData);
-      setReminders(remData);
-      setTransactions(txData);
+      
+      setCustomers(cachedCust);
+      setReminders(cachedRem);
+      setTransactions(cachedTx);
+      
+      // If we resolved from cache, hide loader immediately
+      if (cachedCust.length > 0 || cachedTx.length > 0) {
+        setLoading(false);
+      }
+    } catch (e: any) {
+      console.warn('[SWR CACHE READ] Failed to load from cache:', e.message);
+    }
+    
+    try {
+      // Step B: Query server in background to sync state quietly
+      const [freshCust, freshRem, freshTx] = await Promise.all([
+        fetchCustomers(targetDate, forceRefresh || loading),
+        fetchReminders(targetDate, forceRefresh || loading),
+        fetchTransactions(targetDate, forceRefresh || loading)
+      ]);
+      
+      setCustomers(freshCust);
+      setReminders(freshRem);
+      setTransactions(freshTx);
     } catch (err) {
-      console.error('Failed to sync database:', err);
+      console.error('Failed to sync database in background:', err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleBalanceChangeIncremental = (customerId: string, newBalance: number, newTx?: Transaction) => {
+    // 1. Update customer balance in local state
+    setCustomers(prev => prev.map(c => c.id === customerId ? { ...c, balance: newBalance, last_updated: newTx ? newTx.date : c.last_updated } : c));
+    
+    // 2. Add transaction to state
+    if (newTx) {
+      setTransactions(prev => [...prev.filter(t => t.id !== newTx.id), newTx]);
+    }
+    
+    // 3. Invalidate caches
+    clearCacheForDate(selectedDate);
+    clearLedgerCache(customerId);
+    
+    // 4. Background refresh quietly
+    loadData(selectedDate, true);
+  };
+
+  const handleVoiceTransactionSaved = (newCustomer: Customer | null, customerId: string, newBalance: number, newTx: Transaction) => {
+    // 1. Invalidate caches
+    clearCacheForDate(selectedDate);
+    if (newCustomer) {
+      clearLedgerCache(newCustomer.id);
+    }
+    clearLedgerCache(customerId);
+
+    // 2. Update states
+    if (newCustomer) {
+      const formattedCust: Customer = {
+        ...newCustomer,
+        balance: newBalance,
+        last_updated: newTx.date,
+        normalizedName: newCustomer.normalizedName || newCustomer.name.toLowerCase().replace(/\s+/g, ''),
+        aliases: newCustomer.aliases || [newCustomer.name],
+        deleted: false
+      };
+      setCustomers(prev => [...prev.filter(c => c.id !== newCustomer.id), formattedCust]);
+    } else {
+      setCustomers(prev => prev.map(c => c.id === customerId ? { ...c, balance: newBalance, last_updated: newTx.date } : c));
+    }
+    setTransactions(prev => [...prev.filter(t => t.id !== newTx.id), newTx]);
+
+    // 3. Trigger background refresh
+    loadData(selectedDate, true);
   };
 
   useEffect(() => {
@@ -683,10 +751,19 @@ export default function App() {
                   <CustomerLedger 
                     customerId={selectedCustomerId} 
                     onBack={() => setSelectedCustomerId(null)}
-                    onBalanceChange={loadData}
+                    onBalanceChange={handleBalanceChangeIncremental}
                     onUpdateCustomer={async (id, data) => {
-                      await updateCustomer(id, data);
-                      await loadData();
+                      // Optimistic update
+                      setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...data } : c));
+                      clearCacheForDate(selectedDate);
+                      clearLedgerCache(id);
+                      try {
+                        await updateCustomer(id, data);
+                        loadData(selectedDate, true);
+                      } catch (err) {
+                        loadData(selectedDate, true);
+                        throw err;
+                      }
                     }}
                     selectedDate={selectedDate}
                   />
@@ -699,20 +776,59 @@ export default function App() {
                         alert(`A customer with a similar name already exists: ${result.candidates.map((c: any) => c.name).join(', ')}. Please use a unique name.`);
                         throw new Error('Duplicate customer exists');
                       }
-                      await loadData();
+                      
+                      clearCacheForDate(selectedDate);
+                      
+                      const newCreatedCustomer = {
+                        id: result.id,
+                        merchant_id: localStorage.getItem('udhaar_merchant_id') || 'merchant_1',
+                        name: result.name,
+                        displayName: result.name,
+                        alias: result.alias || '',
+                        phone: result.phone || '',
+                        created_at: result.created_at || new Date().toISOString(),
+                        balance: 0,
+                        last_updated: result.created_at || new Date().toISOString(),
+                        normalizedName: result.name.toLowerCase().replace(/\s+/g, ''),
+                        aliases: [result.name],
+                        deleted: false
+                      };
+                      setCustomers(prev => [...prev.filter(c => c.id !== result.id), newCreatedCustomer]);
+                      
+                      loadData(selectedDate, true);
+                      
                       if (result.was_existing) {
                         alert(`Customer "${result.name}" already exists. Opening their ledger.`);
                         handleNavigate('customers', { openLedgerId: result.id });
                       }
+                      return result;
                     }}
                     onSelectCustomer={(id) => setSelectedCustomerId(id)}
                     onDeleteCustomer={async (id) => {
-                      await deleteCustomer(id);
-                      await loadData();
+                      // Optimistic delete
+                      setCustomers(prev => prev.filter(c => c.id !== id));
+                      clearCacheForDate(selectedDate);
+                      clearLedgerCache(id);
+                      try {
+                        await deleteCustomer(id);
+                        loadData(selectedDate, true);
+                      } catch (err) {
+                        loadData(selectedDate, true);
+                        alert('Failed to delete customer');
+                      }
                     }}
                     onUpdateCustomer={async (id, data) => {
-                      await updateCustomer(id, data);
-                      await loadData();
+                      // Optimistic update
+                      setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...data } : c));
+                      clearCacheForDate(selectedDate);
+                      clearLedgerCache(id);
+                      try {
+                        await updateCustomer(id, data);
+                        loadData(selectedDate, true);
+                      } catch (err) {
+                        loadData(selectedDate, true);
+                        alert('Failed to update customer');
+                      }
                     }}
                   />
                 )
@@ -721,7 +837,7 @@ export default function App() {
               {activePage === 'voice-recorder' && (
                 <VoiceRecorder 
                   customers={customers}
-                  onTransactionSaved={loadData}
+                  onTransactionSaved={handleVoiceTransactionSaved}
                   onNavigate={handleNavigate}
                 />
               )}

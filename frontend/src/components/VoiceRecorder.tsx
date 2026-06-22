@@ -6,7 +6,7 @@ import confetti from 'canvas-confetti';
 
 interface VoiceRecorderProps {
   customers: Customer[];
-  onTransactionSaved: () => void;
+  onTransactionSaved: (newCustomer: Customer | null, customerId: string, newBalance: number, newTx: any) => void;
   onNavigate: (page: string, params?: any) => void;
 }
 
@@ -328,6 +328,7 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
     try {
       setIsSaving(true);
       let customerId = matchedCustomer ? matchedCustomer.id : '';
+      let createdCustomer: Customer | null = null;
 
       // If customer doesn't exist, create customer ledger first with uniqueness safety
       if (!customerId) {
@@ -343,11 +344,12 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
         }
         
         customerId = result.id;
+        createdCustomer = result;
       }
 
       setSaveProgress('recording_transaction');
       // Record transaction
-      await createTransaction({
+      const txResult = await createTransaction({
         customerId,
         amount: extractedAmount,
         type: extractedType as 'credit' | 'collection',
@@ -366,7 +368,12 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
       // 1s delay on success state so the user visually registers the success checkmark
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      onTransactionSaved();
+      onTransactionSaved(
+        createdCustomer,
+        customerId,
+        txResult.newBalance,
+        txResult.transaction
+      );
       
       // Navigate to ledger on completion
       onNavigate('customers', { openLedgerId: customerId });

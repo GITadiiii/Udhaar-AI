@@ -54,22 +54,75 @@ export async function fetchWithTimeout(
   }
 }
 
-export async function fetchCustomers(date?: string): Promise<Customer[]> {
+// Memory cache registries for fast read and SWR operations
+const customersCache: Record<string, Customer[]> = {};
+const transactionsCache: Record<string, Transaction[]> = {};
+const remindersCache: Record<string, Reminder[]> = {};
+const ledgerCache: Record<string, Ledger> = {};
+const summaryCache: Record<string, DailySummary> = {};
+
+// Cache invalidation helpers
+export function clearAllCaches() {
+  Object.keys(customersCache).forEach(k => delete customersCache[k]);
+  Object.keys(transactionsCache).forEach(k => delete transactionsCache[k]);
+  Object.keys(remindersCache).forEach(k => delete remindersCache[k]);
+  Object.keys(ledgerCache).forEach(k => delete ledgerCache[k]);
+  Object.keys(summaryCache).forEach(k => delete summaryCache[k]);
+  console.log('[API CACHE] All caches cleared.');
+}
+
+export function clearCacheForDate(date?: string) {
+  if (date) {
+    const formattedDate = date.slice(0, 10);
+    delete customersCache[formattedDate];
+    delete customersCache['all'];
+    delete transactionsCache[formattedDate];
+    delete transactionsCache['all'];
+    delete remindersCache[formattedDate];
+    delete remindersCache['all'];
+    delete summaryCache[formattedDate];
+    delete summaryCache['today'];
+    console.log(`[API CACHE] Cache cleared for date: ${formattedDate}`);
+  } else {
+    clearAllCaches();
+  }
+}
+
+export function clearLedgerCache(customerId: string) {
+  delete ledgerCache[customerId];
+  console.log(`[API CACHE] Ledger cache cleared for customer: ${customerId}`);
+}
+
+export async function fetchCustomers(date?: string, forceRefresh = false): Promise<Customer[]> {
+  const cacheKey = date ? date.slice(0, 10) : 'all';
+  if (customersCache[cacheKey] && !forceRefresh) {
+    return Promise.resolve(customersCache[cacheKey]);
+  }
+
   const url = date ? `${API_BASE}/customers?date=${date}` : `${API_BASE}/customers`;
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
   });
   if (!res.ok) throw new Error('Failed to fetch customers');
-  return res.json();
+  const data = await res.json();
+  customersCache[cacheKey] = data;
+  return data;
 }
 
-export async function fetchTransactions(date?: string): Promise<Transaction[]> {
+export async function fetchTransactions(date?: string, forceRefresh = false): Promise<Transaction[]> {
+  const cacheKey = date ? date.slice(0, 10) : 'all';
+  if (transactionsCache[cacheKey] && !forceRefresh) {
+    return Promise.resolve(transactionsCache[cacheKey]);
+  }
+
   const url = date ? `${API_BASE}/transactions?date=${date}` : `${API_BASE}/transactions`;
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
   });
   if (!res.ok) throw new Error('Failed to fetch transactions');
-  return res.json();
+  const data = await res.json();
+  transactionsCache[cacheKey] = data;
+  return data;
 }
 
 export async function createCustomer(name: string, phone: string, alias?: string, confirmNew?: boolean): Promise<any> {
@@ -114,13 +167,20 @@ export async function updateCustomer(
   return res.json();
 }
 
-export async function fetchLedger(customerId: string, date?: string): Promise<Ledger> {
+export async function fetchLedger(customerId: string, date?: string, forceRefresh = false): Promise<Ledger> {
+  const cacheKey = `${customerId}_${date ? date.slice(0, 10) : 'all'}`;
+  if (ledgerCache[cacheKey] && !forceRefresh) {
+    return Promise.resolve(ledgerCache[cacheKey]);
+  }
+
   const url = date ? `${API_BASE}/customers/${customerId}/ledger?date=${date}` : `${API_BASE}/customers/${customerId}/ledger`;
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
   });
   if (!res.ok) throw new Error('Failed to fetch customer ledger');
-  return res.json();
+  const data = await res.json();
+  ledgerCache[cacheKey] = data;
+  return data;
 }
 
 export async function createTransaction(tx: {
@@ -160,22 +220,36 @@ export async function processVoice(transcript: string): Promise<VoiceProcessResu
   return res.json();
 }
 
-export async function fetchDailySummary(date?: string): Promise<DailySummary> {
+export async function fetchDailySummary(date?: string, forceRefresh = false): Promise<DailySummary> {
+  const cacheKey = date ? date.slice(0, 10) : 'today';
+  if (summaryCache[cacheKey] && !forceRefresh) {
+    return Promise.resolve(summaryCache[cacheKey]);
+  }
+
   const url = date ? `${API_BASE}/summary/daily?date=${date}` : `${API_BASE}/summary/daily`;
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
   });
   if (!res.ok) throw new Error('Failed to fetch daily summary');
-  return res.json();
+  const data = await res.json();
+  summaryCache[cacheKey] = data;
+  return data;
 }
 
-export async function fetchReminders(date?: string): Promise<Reminder[]> {
+export async function fetchReminders(date?: string, forceRefresh = false): Promise<Reminder[]> {
+  const cacheKey = date ? date.slice(0, 10) : 'all';
+  if (remindersCache[cacheKey] && !forceRefresh) {
+    return Promise.resolve(remindersCache[cacheKey]);
+  }
+
   const url = date ? `${API_BASE}/reminders?date=${date}` : `${API_BASE}/reminders`;
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
   });
   if (!res.ok) throw new Error('Failed to fetch reminders');
-  return res.json();
+  const data = await res.json();
+  remindersCache[cacheKey] = data;
+  return data;
 }
 
 export async function deleteTransaction(id: string): Promise<any> {

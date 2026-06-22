@@ -9,6 +9,9 @@ export interface Customer {
   address?: string;
   notes?: string;
   customerType?: string;
+  normalizedName?: string;
+  aliases?: string[];
+  deleted?: boolean;
 }
 
 export interface Transaction {

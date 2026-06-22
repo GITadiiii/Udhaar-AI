@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Ledger, Transaction } from '../types';
-import { fetchLedger, createTransaction, deleteTransaction } from '../utils/api';
+import { fetchLedger, createTransaction, deleteTransaction, clearCacheForDate, clearLedgerCache } from '../utils/api';
 import { ArrowLeft, Phone, Calendar, ArrowUpRight, ArrowDownLeft, AlertCircle, Share2, Clipboard, MessageSquare, Plus, PlusCircle, CheckCircle, Trash2, X, AlertTriangle } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 interface CustomerLedgerProps {
   customerId: string;
   onBack: () => void;
-  onBalanceChange: () => void;
+  onBalanceChange: (customerId: string, newBalance: number, newTx?: any) => void;
   onUpdateCustomer: (id: string, customer: { name: string; phone: string; alias: string; address?: string; notes?: string; customerType?: string }) => Promise<void>;
   selectedDate: string;
 }
@@ -108,8 +108,14 @@ export default function CustomerLedger({ customerId, onBack, onBalanceChange, on
         customerType: editCustomerType
       });
       setShowEditModal(false);
-      await loadLedger();
-      onBalanceChange();
+      
+      // Invalidate caches
+      clearCacheForDate(selectedDate);
+      clearLedgerCache(ledger.customer.id);
+      
+      // Load details and trigger parent state update
+      await loadLedger(true, true);
+      onBalanceChange(ledger.customer.id, ledger.customer.balance);
     } catch (err: any) {
       console.error(err);
       setEditError(err.message || 'Failed to update customer');
@@ -118,16 +124,16 @@ export default function CustomerLedger({ customerId, onBack, onBalanceChange, on
     }
   };
 
-  const loadLedger = async () => {
-    setLoading(true);
+  const loadLedger = async (forceRefresh = false, quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
-      const data = await fetchLedger(customerId, selectedDate);
+      const data = await fetchLedger(customerId, selectedDate, forceRefresh);
       setLedger(data);
       setError(null);
     } catch (err: any) {
-      setError(err.message || 'Failed to load ledger');
+      if (!quiet) setError(err.message || 'Failed to load ledger');
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   };
 
@@ -148,7 +154,7 @@ export default function CustomerLedger({ customerId, onBack, onBalanceChange, on
       const parsedAmount = parseFloat(amount);
       const formattedDate = new Date(txDate).toISOString();
 
-      await createTransaction({
+      const res = await createTransaction({
         customerId,
         amount: parsedAmount,
         type: showTxModal,
@@ -166,13 +172,36 @@ export default function CustomerLedger({ customerId, onBack, onBalanceChange, on
       setAmount('');
       setDescription('');
       setShowTxModal(false);
-      
-      // Reload details and trigger parent state update
-      await loadLedger();
-      onBalanceChange();
+
+      const newTx = res.transaction;
+      const newBalance = res.newBalance;
+
+      // Update local ledger state optimistically
+      setLedger(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          customer: {
+            ...prev.customer,
+            balance: newBalance,
+            last_updated: newTx.date
+          },
+          transactions: [...prev.transactions, newTx]
+        };
+      });
+
+      // Invalidate caches
+      clearCacheForDate(selectedDate);
+      clearLedgerCache(customerId);
+
+      // Trigger parent state update
+      onBalanceChange(customerId, newBalance, newTx);
       
       setSuccessMsg(`Successfully saved ${showTxModal} entry!`);
       setTimeout(() => setSuccessMsg(''), 3000);
+
+      // Reload details in background quietly
+      loadLedger(true, true);
     } catch (err: any) {
       console.error(err);
       alert('Failed to save transaction');
@@ -185,12 +214,44 @@ export default function CustomerLedger({ customerId, onBack, onBalanceChange, on
     if (!transactionToDelete) return;
     setDeletingTx(true);
     try {
-      await deleteTransaction(transactionToDelete.id);
+      const txId = transactionToDelete.id;
+      const txAmount = transactionToDelete.amount;
+      const txType = transactionToDelete.type;
+
+      // Mathematically calculate new balance
+      const balanceDiff = txType === 'credit' ? -txAmount : txAmount;
+      const currentBalance = ledger?.customer.balance ?? 0;
+      const newBalance = currentBalance + balanceDiff;
+
+      await deleteTransaction(txId);
+
+      // Update local ledger state optimistically
+      setLedger(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          customer: {
+            ...prev.customer,
+            balance: newBalance
+          },
+          transactions: prev.transactions.filter(t => t.id !== txId)
+        };
+      });
+
       setTransactionToDelete(null);
-      await loadLedger();
-      onBalanceChange();
+
+      // Invalidate caches
+      clearCacheForDate(selectedDate);
+      clearLedgerCache(customerId);
+
+      // Trigger parent state update
+      onBalanceChange(customerId, newBalance);
+
       setSuccessMsg('Transaction deleted successfully!');
       setTimeout(() => setSuccessMsg(''), 3000);
+
+      // Reload details in background quietly
+      loadLedger(true, true);
     } catch (err) {
       console.error(err);
       alert('Error deleting transaction');

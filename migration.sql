@@ -94,6 +94,10 @@ ALTER TABLE daily_summaries DROP CONSTRAINT IF EXISTS unique_merchant_date;
 ALTER TABLE daily_summaries ADD CONSTRAINT unique_merchant_date UNIQUE (merchant_id, date);
 
 CREATE INDEX IF NOT EXISTS idx_summaries_merchant ON daily_summaries (merchant_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_merchant_date ON transactions (merchant_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_customer_date ON transactions (customer_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_reminders_customer ON reminders (customer_id);
+CREATE INDEX IF NOT EXISTS idx_customers_merchant_name ON customers (merchant_id, name);
 
 -- 7. Enable Row-Level Security (RLS) on all tables for merchant isolation
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
