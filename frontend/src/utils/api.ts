@@ -61,6 +61,54 @@ const remindersCache: Record<string, Reminder[]> = {};
 const ledgerCache: Record<string, Ledger> = {};
 const summaryCache: Record<string, DailySummary> = {};
 
+// Helper to resolve merchant-scoped localStorage key
+const getMerchantCacheKey = (prefix: string, key: string) => {
+  const merchantId = localStorage.getItem('udhaar_merchant_id') || 'merchant_1';
+  return `udhaar_cache_${merchantId}_${prefix}_${key}`;
+};
+
+function getCachedData<T>(prefix: string, key: string): T | null {
+  try {
+    const cacheKey = getMerchantCacheKey(prefix, key);
+    const serialized = localStorage.getItem(cacheKey);
+    if (!serialized) return null;
+    return JSON.parse(serialized) as T;
+  } catch (e) {
+    console.error('[CACHE READ ERROR]', e);
+    return null;
+  }
+}
+
+function setCachedData<T>(prefix: string, key: string, data: T) {
+  try {
+    const cacheKey = getMerchantCacheKey(prefix, key);
+    localStorage.setItem(cacheKey, JSON.stringify(data));
+  } catch (e) {
+    console.error('[CACHE WRITE ERROR]', e);
+  }
+}
+
+function deleteCachedData(prefix: string, key: string) {
+  try {
+    const cacheKey = getMerchantCacheKey(prefix, key);
+    localStorage.removeItem(cacheKey);
+  } catch (e) {}
+}
+
+function clearAllCachedKeys() {
+  try {
+    const prefix = 'udhaar_cache_';
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(prefix)) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+  } catch (e) {}
+}
+
 // Cache invalidation helpers
 export function clearAllCaches() {
   Object.keys(customersCache).forEach(k => delete customersCache[k]);
@@ -68,6 +116,8 @@ export function clearAllCaches() {
   Object.keys(remindersCache).forEach(k => delete remindersCache[k]);
   Object.keys(ledgerCache).forEach(k => delete ledgerCache[k]);
   Object.keys(summaryCache).forEach(k => delete summaryCache[k]);
+  
+  clearAllCachedKeys();
   console.log('[API CACHE] All caches cleared.');
 }
 
@@ -76,12 +126,24 @@ export function clearCacheForDate(date?: string) {
     const formattedDate = date.slice(0, 10);
     delete customersCache[formattedDate];
     delete customersCache['all'];
+    deleteCachedData('customers', formattedDate);
+    deleteCachedData('customers', 'all');
+
     delete transactionsCache[formattedDate];
     delete transactionsCache['all'];
+    deleteCachedData('transactions', formattedDate);
+    deleteCachedData('transactions', 'all');
+
     delete remindersCache[formattedDate];
     delete remindersCache['all'];
+    deleteCachedData('reminders', formattedDate);
+    deleteCachedData('reminders', 'all');
+
     delete summaryCache[formattedDate];
     delete summaryCache['today'];
+    deleteCachedData('summaries', formattedDate);
+    deleteCachedData('summaries', 'today');
+
     console.log(`[API CACHE] Cache cleared for date: ${formattedDate}`);
   } else {
     clearAllCaches();
@@ -90,6 +152,21 @@ export function clearCacheForDate(date?: string) {
 
 export function clearLedgerCache(customerId: string) {
   delete ledgerCache[customerId];
+  deleteCachedData('ledger', customerId);
+
+  try {
+    const merchantId = localStorage.getItem('udhaar_merchant_id') || 'merchant_1';
+    const prefix = `udhaar_cache_${merchantId}_ledger_${customerId}`;
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(prefix)) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+  } catch (e) {}
+
   console.log(`[API CACHE] Ledger cache cleared for customer: ${customerId}`);
 }
 
@@ -99,6 +176,14 @@ export async function fetchCustomers(date?: string, forceRefresh = false): Promi
     return Promise.resolve(customersCache[cacheKey]);
   }
 
+  if (!forceRefresh) {
+    const local = getCachedData<Customer[]>('customers', cacheKey);
+    if (local) {
+      customersCache[cacheKey] = local;
+      return Promise.resolve(local);
+    }
+  }
+
   const url = date ? `${API_BASE}/customers?date=${date}` : `${API_BASE}/customers`;
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
@@ -106,6 +191,7 @@ export async function fetchCustomers(date?: string, forceRefresh = false): Promi
   if (!res.ok) throw new Error('Failed to fetch customers');
   const data = await res.json();
   customersCache[cacheKey] = data;
+  setCachedData('customers', cacheKey, data);
   return data;
 }
 
@@ -115,6 +201,14 @@ export async function fetchTransactions(date?: string, forceRefresh = false): Pr
     return Promise.resolve(transactionsCache[cacheKey]);
   }
 
+  if (!forceRefresh) {
+    const local = getCachedData<Transaction[]>('transactions', cacheKey);
+    if (local) {
+      transactionsCache[cacheKey] = local;
+      return Promise.resolve(local);
+    }
+  }
+
   const url = date ? `${API_BASE}/transactions?date=${date}` : `${API_BASE}/transactions`;
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
@@ -122,6 +216,7 @@ export async function fetchTransactions(date?: string, forceRefresh = false): Pr
   if (!res.ok) throw new Error('Failed to fetch transactions');
   const data = await res.json();
   transactionsCache[cacheKey] = data;
+  setCachedData('transactions', cacheKey, data);
   return data;
 }
 
@@ -173,6 +268,14 @@ export async function fetchLedger(customerId: string, date?: string, forceRefres
     return Promise.resolve(ledgerCache[cacheKey]);
   }
 
+  if (!forceRefresh) {
+    const local = getCachedData<Ledger>('ledger', cacheKey);
+    if (local) {
+      ledgerCache[cacheKey] = local;
+      return Promise.resolve(local);
+    }
+  }
+
   const url = date ? `${API_BASE}/customers/${customerId}/ledger?date=${date}` : `${API_BASE}/customers/${customerId}/ledger`;
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
@@ -180,6 +283,7 @@ export async function fetchLedger(customerId: string, date?: string, forceRefres
   if (!res.ok) throw new Error('Failed to fetch customer ledger');
   const data = await res.json();
   ledgerCache[cacheKey] = data;
+  setCachedData('ledger', cacheKey, data);
   return data;
 }
 
@@ -226,6 +330,14 @@ export async function fetchDailySummary(date?: string, forceRefresh = false): Pr
     return Promise.resolve(summaryCache[cacheKey]);
   }
 
+  if (!forceRefresh) {
+    const local = getCachedData<DailySummary>('summaries', cacheKey);
+    if (local) {
+      summaryCache[cacheKey] = local;
+      return Promise.resolve(local);
+    }
+  }
+
   const url = date ? `${API_BASE}/summary/daily?date=${date}` : `${API_BASE}/summary/daily`;
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
@@ -233,6 +345,7 @@ export async function fetchDailySummary(date?: string, forceRefresh = false): Pr
   if (!res.ok) throw new Error('Failed to fetch daily summary');
   const data = await res.json();
   summaryCache[cacheKey] = data;
+  setCachedData('summaries', cacheKey, data);
   return data;
 }
 
@@ -242,6 +355,14 @@ export async function fetchReminders(date?: string, forceRefresh = false): Promi
     return Promise.resolve(remindersCache[cacheKey]);
   }
 
+  if (!forceRefresh) {
+    const local = getCachedData<Reminder[]>('reminders', cacheKey);
+    if (local) {
+      remindersCache[cacheKey] = local;
+      return Promise.resolve(local);
+    }
+  }
+
   const url = date ? `${API_BASE}/reminders?date=${date}` : `${API_BASE}/reminders`;
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
@@ -249,6 +370,7 @@ export async function fetchReminders(date?: string, forceRefresh = false): Promi
   if (!res.ok) throw new Error('Failed to fetch reminders');
   const data = await res.json();
   remindersCache[cacheKey] = data;
+  setCachedData('reminders', cacheKey, data);
   return data;
 }
 

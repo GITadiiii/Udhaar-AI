@@ -47,6 +47,35 @@ export default function App() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // Performance Log states to track one-time boot metric logs
+  const [hasLoggedDashboard, setHasLoggedDashboard] = useState(false);
+  const [hasLoggedCustomers, setHasLoggedCustomers] = useState(false);
+
+  // Log App Open -> First Paint metric once
+  useEffect(() => {
+    const firstPaint = performance.now() - ((window as any).APP_START_TIME || performance.now());
+    console.log(`[PERFORMANCE] App Open -> First Paint / Render: ${firstPaint.toFixed(2)}ms`);
+  }, []);
+
+  // Log App Open -> Dashboard Visible once data is present
+  useEffect(() => {
+    if (!loading && customers.length > 0 && !hasLoggedDashboard) {
+      setHasLoggedDashboard(true);
+      const visibleTime = performance.now() - ((window as any).APP_START_TIME || performance.now());
+      console.log(`[PERFORMANCE] App Open -> Dashboard Visible: ${visibleTime.toFixed(2)}ms`);
+    }
+  }, [loading, customers, hasLoggedDashboard]);
+
+  // Log App Open -> Customer List Loaded once data is ready
+  useEffect(() => {
+    if (customers.length > 0 && !hasLoggedCustomers) {
+      setHasLoggedCustomers(true);
+      const visibleTime = performance.now() - ((window as any).APP_START_TIME || performance.now());
+      console.log(`[PERFORMANCE] App Open -> Customer List Loaded: ${visibleTime.toFixed(2)}ms`);
+    }
+  }, [customers, hasLoggedCustomers]);
 
   // Initialize default merchant ID if not present
   useEffect(() => {
@@ -146,6 +175,7 @@ export default function App() {
 
   const loadData = async (dateStr?: string, forceRefresh = false) => {
     const targetDate = dateStr || selectedDate;
+    const syncStart = performance.now();
     
     try {
       // Step A: Load instantly from cache first (if exists)
@@ -162,25 +192,33 @@ export default function App() {
       // If we resolved from cache, hide loader immediately
       if (cachedCust.length > 0 || cachedTx.length > 0) {
         setLoading(false);
+        const paintTime = performance.now() - ((window as any).APP_START_TIME || performance.now());
+        console.log(`[PERFORMANCE] App Open -> Cached UI painted in ${paintTime.toFixed(2)}ms`);
       }
     } catch (e: any) {
       console.warn('[SWR CACHE READ] Failed to load from cache:', e.message);
     }
     
+    setIsSyncing(true);
     try {
       // Step B: Query server in background to sync state quietly
       const [freshCust, freshRem, freshTx] = await Promise.all([
-        fetchCustomers(targetDate, forceRefresh || loading),
-        fetchReminders(targetDate, forceRefresh || loading),
-        fetchTransactions(targetDate, forceRefresh || loading)
+        fetchCustomers(targetDate, true),
+        fetchReminders(targetDate, true),
+        fetchTransactions(targetDate, true)
       ]);
       
       setCustomers(freshCust);
       setReminders(freshRem);
       setTransactions(freshTx);
+      
+      const bootSyncTime = performance.now() - ((window as any).APP_START_TIME || performance.now());
+      const querySyncTime = performance.now() - syncStart;
+      console.log(`[PERFORMANCE] App Open -> Sync Complete: Fresh UI loaded in ${bootSyncTime.toFixed(2)}ms (Sync query took ${querySyncTime.toFixed(2)}ms)`);
     } catch (err) {
       console.error('Failed to sync database in background:', err);
     } finally {
+      setIsSyncing(false);
       setLoading(false);
     }
   };
@@ -704,9 +742,17 @@ export default function App() {
               <Menu size={20} />
             </button>
             <div>
-              <span className="text-[10px] font-extrabold uppercase tracking-wider text-brand-green bg-green-50 px-2.5 py-1 rounded-full border border-green-100">
-                {shopName}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-brand-green bg-green-50 px-2.5 py-1 rounded-full border border-green-100">
+                  {shopName}
+                </span>
+                {isSyncing && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-brand-green bg-emerald-50 px-2 py-0.5 rounded-full border border-green-100 animate-pulse">
+                    <RefreshCw size={10} className="animate-spin" />
+                    Syncing updates...
+                  </span>
+                )}
+              </div>
               <h2 className="text-xl sm:text-2xl font-black text-brand-dark tracking-tight mt-1">
                 {activePage === 'dashboard' && 'Dashboard'}
                 {activePage === 'customers' && (selectedCustomerId ? 'Customer Ledger' : 'Customer Ledgers')}
@@ -728,7 +774,7 @@ export default function App() {
         {loading ? (
           <div className="flex flex-col items-center justify-center h-full space-y-4">
             <div className="w-12 h-12 border-4 border-brand-green border-t-transparent rounded-full animate-spin"></div>
-            <p className="text-brand-gray-500 font-semibold text-sm">Syncing ledger records...</p>
+            <p className="text-brand-gray-500 font-semibold text-sm">Loading latest updates...</p>
           </div>
         ) : (
           <>

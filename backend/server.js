@@ -1,3 +1,6 @@
+const BOOT_START = Date.now();
+let isFirstRequest = true;
+
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -79,6 +82,11 @@ app.use(express.json());
 // Log incoming requests and record performance metrics
 app.use((req, res, next) => {
   const start = Date.now();
+  if (isFirstRequest) {
+    isFirstRequest = false;
+    const coldStartDuration = Date.now() - BOOT_START;
+    console.log(`[COLD START DIAGNOSTIC] First request received at server. Time since boot start: ${coldStartDuration}ms`);
+  }
   res.on('finish', () => {
     const duration = Date.now() - start;
     console.log(`[API LOG] ${req.method} ${req.originalUrl} - Status: ${res.statusCode} - Duration: ${duration}ms`);
@@ -563,8 +571,19 @@ app.get('/api/reminders', async (req, res) => {
 
 // Start Server
 async function startServer() {
+  // Start listening immediately to avoid blocking cold starts
+  app.listen(PORT, () => {
+    console.log(`Express server running on http://localhost:${PORT}`);
+    console.log(`[BOOT] Server listening initialized in ${Date.now() - BOOT_START}ms.`);
+    
+    // Trigger background initialization tasks
+    runBackgroundInitialization();
+  });
+}
+
+async function runBackgroundInitialization() {
   if (process.env.DISABLE_SUPABASE_SYNC !== 'true' && process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
-    console.log('--- Starting Supabase Schema Validation ---');
+    console.log('[STARTUP] Running Supabase schema validation and initial synchronization in background...');
     try {
       const { supabase } = await import('./supabase.js');
       const schema = {
@@ -577,7 +596,8 @@ async function startServer() {
       };
 
       const errors = [];
-      for (const [table, columns] of Object.entries(schema)) {
+      // Run table verification concurrently to speed up checks
+      await Promise.all(Object.entries(schema).map(async ([table, columns]) => {
         for (const column of columns) {
           const { error } = await supabase.from(table).select(column).limit(1);
           if (error) {
@@ -591,21 +611,22 @@ async function startServer() {
             }
           }
         }
-      }
+      }));
 
       if (errors.length > 0) {
         console.error('\n❌ CRITICAL SCHEMA ERROR: Supabase database schema is out of sync!');
         errors.forEach(err => console.error(`  - ${err}`));
-        console.error('\nPlease run the migration SQL script in your Supabase SQL Editor to align the schema before launching the backend.\n');
+        console.error('\nPlease run the migration SQL script in your Supabase SQL Editor to align the schema.\n');
         process.exit(1);
       } else {
         console.log('✅ Supabase Schema Validation Passed: All tables and columns match.');
-        console.log('[STARTUP] Syncing database state from Supabase...');
+        console.log('[STARTUP] Syncing database state from Supabase in background...');
+        const syncStart = Date.now();
         await syncFromSupabase();
+        console.log(`[STARTUP] Initial database sync completed in ${Date.now() - syncStart}ms.`);
       }
     } catch (validationErr) {
-      console.error('❌ Failed to connect/validate Supabase schema:', validationErr.message);
-      process.exit(1);
+      console.warn('⚠️ [STARTUP WARNING] Failed to complete Supabase schema validation or initial sync in background:', validationErr.message);
     }
   } else {
     console.log('ℹ️ Supabase integration is disabled or credentials not provided. Running in local db.json-only fallback mode.');
@@ -621,10 +642,6 @@ async function startServer() {
       console.error('[STARTUP ERROR] Background merge duplicate customers failed:', err.message);
     }
   }, 1000);
-
-  app.listen(PORT, () => {
-    console.log(`Express server running on http://localhost:${PORT}`);
-  });
 }
 
 startServer();

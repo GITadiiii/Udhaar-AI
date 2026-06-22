@@ -815,6 +815,7 @@ export function getCustomers(merchantId, dateStr) {
       const merchantUuid = toUUID(targetMerchantId);
       
       // Parallelize Supabase reads
+      const queryStart = Date.now();
       const [cRes, bRes, tRes] = await Promise.all([
         supabase
           .from('customers')
@@ -832,6 +833,7 @@ export function getCustomers(merchantId, dateStr) {
               .lte('date', new Date(dateStr + 'T23:59:59.999Z').toISOString())
           : Promise.resolve({ data: [] })
       ]);
+      console.log(`[SUPABASE QUERY] getCustomers (Parallelized Reads) - Duration: ${Date.now() - queryStart}ms`);
       
       const { data: customers, error: cErr } = cRes;
       const { data: balances, error: bErr } = bRes;
@@ -1131,6 +1133,7 @@ export function addCustomer({ name, phone, alias, aliases, confirmNew = false, m
       
       const { supabase } = await import('./supabase.js');
       
+      const queryStart = Date.now();
       // Parallelize customer insertion and outstanding balance initialization
       const [cErrRes, bErrRes] = await Promise.all([
         supabase.from('customers').insert({
@@ -1155,6 +1158,7 @@ export function addCustomer({ name, phone, alias, aliases, confirmNew = false, m
           last_updated: newCustomer.created_at
         })
       ]);
+      console.log(`[SUPABASE QUERY] addCustomer (Parallelized Insert) - Duration: ${Date.now() - queryStart}ms`);
       
       if (cErrRes.error) throw cErrRes.error;
       if (bErrRes.error) throw bErrRes.error;
@@ -1286,8 +1290,10 @@ export async function deleteCustomer(id, merchantId) {
   if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY && process.env.DISABLE_SUPABASE_SYNC !== 'true') {
     try {
       const { supabase } = await import('./supabase.js');
+      const queryStart = Date.now();
       const { error } = await supabase.from('customers').delete().eq('id', toUUID(id));
       if (error) throw error;
+      console.log(`[SUPABASE QUERY] deleteCustomer - Duration: ${Date.now() - queryStart}ms`);
       console.log(`[SUPABASE] Permanently deleted customer UUID: ${toUUID(id)}`);
     } catch (err) {
       console.error('[SUPABASE DELETE ERROR] Customer delete failed:', err.message);
@@ -1388,6 +1394,7 @@ export function updateCustomer(id, { name, phone, alias, address, notes, custome
       };
       
       const { supabase } = await import('./supabase.js');
+      const queryStart = Date.now();
       const { error: cErr } = await supabase
         .from('customers')
         .update({
@@ -1409,6 +1416,7 @@ export function updateCustomer(id, { name, phone, alias, address, notes, custome
         .eq('merchant_id', toUUID(targetMerchantId));
         
       if (cErr) throw cErr;
+      console.log(`[SUPABASE QUERY] updateCustomer - Duration: ${Date.now() - queryStart}ms`);
       
       const db = readDb();
       const localIndex = db.customers.findIndex(c => c.id === id);
@@ -1687,6 +1695,7 @@ export async function deleteTransaction(id, merchantId) {
       const customerUuid = toUUID(customerId);
       const merchantUuid = toUUID(targetMerchantId);
 
+      const queryStart = Date.now();
       const { error: dErr } = await supabase.from('transactions').delete().eq('id', txUuid);
       if (dErr) throw dErr;
 
@@ -1708,6 +1717,7 @@ export async function deleteTransaction(id, merchantId) {
         last_updated: new Date().toISOString()
       });
       if (bErr) throw bErr;
+      console.log(`[SUPABASE QUERY] deleteTransaction (Delete & Recalculate Balance) - Duration: ${Date.now() - queryStart}ms`);
 
       const ledgerData = await getCustomerLedger(customerId, targetMerchantId);
       const remindersList = ledgerData.reminders || [];
@@ -1750,6 +1760,7 @@ export function getCustomerLedger(customerId, merchantId, dateStr) {
       const customerUuid = toUUID(customerId);
       const merchantUuid = toUUID(targetMerchantId);
       
+      const queryStart = Date.now();
       // Parallelize customer details fetch and transaction records fetch
       const [cRes, tRes] = await Promise.all([
         supabase
@@ -1770,6 +1781,7 @@ export function getCustomerLedger(customerId, merchantId, dateStr) {
           return q;
         })()
       ]);
+      console.log(`[SUPABASE QUERY] getCustomerLedger (Parallelized Reads) - Duration: ${Date.now() - queryStart}ms`);
       
       const { data: customerData, error: cErr } = cRes;
       const { data: txs, error: tErr } = tRes;
@@ -1955,6 +1967,7 @@ export function addTransaction({ customerId, amount, type, description, date, al
         }
       }
       
+      const queryStart = Date.now();
       // 1. Fetch previous balance in parallel with transaction insert
       const [tRes, balRes] = await Promise.all([
         supabase.from('transactions').insert({
@@ -1976,6 +1989,7 @@ export function addTransaction({ customerId, amount, type, description, date, al
       
       if (tRes.error) throw tRes.error;
       if (balRes.error) throw balRes.error;
+      console.log(`[SUPABASE QUERY] addTransaction (Parallelized Insert & Balance Select) - Duration: ${Date.now() - queryStart}ms`);
       
       const prevBalance = balRes.data ? parseFloat(balRes.data.balance) : 0;
       const balance = type === 'credit' ? prevBalance + parsedAmount : Math.max(0, prevBalance - parsedAmount);
@@ -2108,6 +2122,7 @@ export function getReminders(merchantId, dateStr) {
       const merchantUuid = toUUID(targetMerchantId);
       const targetDate = dateStr ? dateStr.slice(0, 10) : getTodayStr();
       
+      const queryStart = Date.now();
       // Parallelize customer list and transactions fetch
       const [customers, txsRes] = await Promise.all([
         getCustomers(targetMerchantId),
@@ -2120,6 +2135,7 @@ export function getReminders(merchantId, dateStr) {
       
       const { data: txs, error: tErr } = txsRes;
       if (tErr) throw tErr;
+      console.log(`[SUPABASE QUERY] getReminders (Parallelized Reads) - Duration: ${Date.now() - queryStart}ms`);
       
       const transactions = (txs || []).map(t => {
         let description = t.description;
