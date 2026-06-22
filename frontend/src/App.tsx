@@ -176,6 +176,12 @@ export default function App() {
   const loadData = async (dateStr?: string, forceRefresh = false) => {
     const targetDate = dateStr || selectedDate;
     const syncStart = performance.now();
+    console.log('[DASHBOARD START] Initializing dashboard data fetch...');
+
+    const spinnerTimeout = setTimeout(() => {
+      setLoading(false);
+      console.warn('[TIMEOUT SAFEGUARD] Loading spinner dismissed after 2.5s timeout safeguard.');
+    }, 2500);
     
     try {
       // Step A: Load instantly from cache first (if exists)
@@ -192,6 +198,7 @@ export default function App() {
       // If we resolved from cache, hide loader immediately
       if (cachedCust.length > 0 || cachedTx.length > 0) {
         setLoading(false);
+        clearTimeout(spinnerTimeout);
         const paintTime = performance.now() - ((window as any).APP_START_TIME || performance.now());
         console.log(`[PERFORMANCE] App Open -> Cached UI painted in ${paintTime.toFixed(2)}ms`);
       }
@@ -201,12 +208,15 @@ export default function App() {
     
     setIsSyncing(true);
     try {
+      console.log(`[LEDGER SYNC START] Background synchronization started for date: ${targetDate}`);
+      const ledSyncStart = performance.now();
       // Step B: Query server in background to sync state quietly
       const [freshCust, freshRem, freshTx] = await Promise.all([
         fetchCustomers(targetDate, true),
         fetchReminders(targetDate, true),
         fetchTransactions(targetDate, true)
       ]);
+      console.log(`[LEDGER SYNC END] Background synchronization finished in ${(performance.now() - ledSyncStart).toFixed(2)}ms`);
       
       setCustomers(freshCust);
       setReminders(freshRem);
@@ -218,8 +228,10 @@ export default function App() {
     } catch (err) {
       console.error('Failed to sync database in background:', err);
     } finally {
+      clearTimeout(spinnerTimeout);
       setIsSyncing(false);
       setLoading(false);
+      console.log(`[DASHBOARD END] Dashboard loading sequence finished. Total duration: ${(performance.now() - syncStart).toFixed(2)}ms`);
     }
   };
 

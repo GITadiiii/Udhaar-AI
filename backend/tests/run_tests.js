@@ -229,6 +229,19 @@ try {
   const matchesRajesh = findExistingCustomer("Rajesh");
   assert(matchesRajesh.length === 0, 'Raju and Rajesh are treated as different customers');
 
+  // Scenario 9.5b: Similar names (Pingu/Mingu, Ramesh/Dinesh, Sonu/Monu) -> Separate customers
+  addCustomer({ name: "Sonu", phone: "+919800077777" });
+  const matchesMonu = findExistingCustomer("Monu");
+  assert(matchesMonu.length === 0, 'Sonu and Monu are treated as different customers');
+
+  addCustomer({ name: "Ramesh", phone: "+919800088888" });
+  const matchesDinesh = findExistingCustomer("Dinesh");
+  assert(matchesDinesh.length === 0, 'Ramesh and Dinesh are treated as different customers');
+
+  addCustomer({ name: "Pingu", phone: "+919800099999" });
+  const matchesMingu = findExistingCustomer("Mingu");
+  assert(matchesMingu.length === 0, 'Pingu and Mingu are treated as different customers');
+
   // Scenario 9.6: Mobile Number Priority
   // Aditi has phone +919876543210. Query for "Aditi" with phone +919876543222 -> Different mobile numbers, MUST NOT merge!
   const matchesAditiDiffPhone = findExistingCustomer("Aditi", "+919876543222");

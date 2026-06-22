@@ -125,14 +125,14 @@ app.get('/api/gemini/metrics', (req, res) => {
 app.get('/api/customers', async (req, res) => {
   const startTime = Date.now();
   const merchantId = getMerchantId(req);
-  console.log(`[DASHBOARD REFRESH START] Get Customers. Merchant: ${merchantId}`);
+  console.log(`[CUSTOMERS START] Merchant: ${merchantId}`);
   try {
     const dateStr = req.query.date; // YYYY-MM-DD
     const customers = await getCustomers(merchantId, dateStr);
-    console.log(`[DASHBOARD REFRESH SUCCESS] Get Customers. Merchant: ${merchantId} in ${Date.now() - startTime}ms`);
+    console.log(`[CUSTOMERS END] Merchant: ${merchantId} Duration: ${Date.now() - startTime}ms`);
     res.json(customers);
   } catch (error) {
-    console.error(`[DASHBOARD REFRESH FAILURE] Get Customers. Merchant: ${merchantId} Error: ${error.message} in ${Date.now() - startTime}ms`);
+    console.error(`[CUSTOMERS FAILURE] Merchant: ${merchantId} Error: ${error.message} in ${Date.now() - startTime}ms`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -195,26 +195,83 @@ app.post('/api/customers', async (req, res) => {
     const localCanonicalName = sanitizeCustomerName(name);
     const normLocalName = normalizeCustomerName(localCanonicalName);
 
-    // 2. Perform fast local match using local canonical name
-    const matches = await findExistingCustomer(localCanonicalName, phone, merchantId, customers);
-
-    // Check for exact match locally (normalized name or alias matches)
-    const exact = matches.find(m => normalizeCustomerName(m.name) === normLocalName);
-    if (exact) {
-      console.log(`[PREVENTED] Duplicate customer creation blocked at API layer (Local Exact Match) for: "${localCanonicalName}" (original: "${name}"). Returning existing ID: ${exact.id}`);
-      const { learnAlias } = await import('./db.js');
-      learnAlias(exact.id, name);
-      console.log(`[CUSTOMER RESPONSE SENT] in ${Date.now() - startTime}ms`);
-      return res.json({ ...exact, was_existing: true });
+    // Rule B: Check if same mobile number exists
+    const normPhone = phone ? phone.replace(/\D/g, '') : '';
+    let phoneMatch = null;
+    if (normPhone && normPhone.length >= 10) {
+      phoneMatch = customers.find(c => {
+        if (c.deleted) return false;
+        const cp = c.phone ? c.phone.replace(/\D/g, '') : '';
+        return cp && cp.endsWith(normPhone.slice(-10));
+      });
     }
 
-    // Check for multiple candidate matches locally (fuzzy match threshold >= 0.70)
-    if (matches.length > 0) {
-      console.log(`[LOOKUP] Local matches found for new customer request: [${matches.map(m => m.name).join(', ')}]. Prompting smart resolution.`);
+    if (phoneMatch) {
+      console.log(`[DUPLICATE CHECK]
+Input Name: ${localCanonicalName}
+Matched Name: ${phoneMatch.name}
+Similarity Score: 1.00 (Phone Match)
+Decision: Block`);
+      console.log(`[PREVENTED] Duplicate customer creation blocked at API layer (Phone Match) for: "${localCanonicalName}" (phone: "${phone}"). Returning existing ID: ${phoneMatch.id}`);
+      console.log(`[CUSTOMER RESPONSE SENT] in ${Date.now() - startTime}ms`);
+      return res.json({ ...phoneMatch, was_existing: true });
+    }
+
+    // Rule A: Check if exact normalized name match exists
+    const exactNameMatch = customers.find(c => 
+      !c.deleted && 
+      (normalizeCustomerName(c.name) === normLocalName || 
+       (c.aliases || []).some(a => normalizeCustomerName(a) === normLocalName))
+    );
+
+    if (exactNameMatch) {
+      console.log(`[DUPLICATE CHECK]
+Input Name: ${localCanonicalName}
+Matched Name: ${exactNameMatch.name}
+Similarity Score: 1.00 (Exact Name Match)
+Decision: Block`);
+      console.log(`[PREVENTED] Duplicate customer creation blocked at API layer (Local Exact Match) for: "${localCanonicalName}" (original: "${name}"). Returning existing ID: ${exactNameMatch.id}`);
+      const { learnAlias } = await import('./db.js');
+      learnAlias(exactNameMatch.id, name);
+      console.log(`[CUSTOMER RESPONSE SENT] in ${Date.now() - startTime}ms`);
+      return res.json({ ...exactNameMatch, was_existing: true });
+    }
+
+    // Perform local match using local canonical name to find fuzzy candidates
+    const matches = await findExistingCustomer(localCanonicalName, phone, merchantId, customers);
+    const highConfidenceMatches = [];
+
+    for (const m of matches) {
+      if (m.id === exactNameMatch?.id || m.id === phoneMatch?.id) continue;
+      const mn = normalizeCustomerName(m.name);
+      
+      // Calculate similarity score
+      const dist = getLevenshteinDistance(mn, normLocalName);
+      const maxLen = Math.max(mn.length, normLocalName.length);
+      const similarity = maxLen > 0 ? (maxLen - dist) / maxLen : 0;
+
+      let decision = 'Allow';
+      const isHighConfidence = (similarity >= 0.95);
+      
+      if (isHighConfidence) {
+        decision = 'Block';
+        highConfidenceMatches.push(m);
+      }
+
+      console.log(`[DUPLICATE CHECK]
+Input Name: ${localCanonicalName}
+Matched Name: ${m.name}
+Similarity Score: ${similarity.toFixed(2)}
+Decision: ${decision}`);
+    }
+
+    // Only block if high confidence duplicate matches are found
+    if (highConfidenceMatches.length > 0) {
+      console.log(`[LOOKUP] High confidence local matches found for new customer request: [${highConfidenceMatches.map(m => m.name).join(', ')}]. Prompting smart resolution.`);
       console.log(`[CUSTOMER RESPONSE SENT] in ${Date.now() - startTime}ms`);
       return res.json({
         status: 'multiple_matches',
-        candidates: matches
+        candidates: highConfidenceMatches
       });
     }
 

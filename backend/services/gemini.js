@@ -208,7 +208,7 @@ export async function callWithGemini(operation, timeoutMs = 3000, maxRetries) {
   // If maxRetries is not explicitly provided:
   // - If only 1 key is configured, retry 1 time (total 2 attempts) to handle transient errors
   // - If multiple keys are configured, failover immediately to the next key (0 retries per key, total attempts = number of keys)
-  const retriesPerKey = maxRetries !== undefined ? maxRetries : (apiKeys.length > 1 ? 0 : 1);
+  const retriesPerKey = maxRetries !== undefined ? maxRetries : 1;
 
   for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
     // Ensure index is in bounds
@@ -733,7 +733,7 @@ Instructions:
 - Devanagari Hindi names should match their English phonetic counterparts (e.g. "राहुल मेकेनिक" matches "Rahul Mechanic").
 - Spelling variations or Hinglish matches should be resolved if they are typos of the same name (e.g. "Rahul Mekanik" matches "Rahul Mechanic").
 - Semantic translations of terms should match (e.g. "राहुल मिस्त्री" matches "Rahul Mechanic", because "मिस्त्री" is Hindi for "mechanic").
-- Do NOT match names that are different people (e.g. "Aditi" and "Aarti" are different people; "Raju" and "Rajesh" are different; "Ankit" and "Ankita" are different; "Rohan" and "Mohan" are different; "Pooja" and "Puja" are different).
+- Do NOT match names that are different people, even if they sound very similar or differ by only one or two characters. For example: "Pingu" and "Mingu" are different people; "Sonu" and "Monu" are different people; "Ramesh" and "Dinesh" are different people; "Pawan" and "Pankaj" are different people; "Aditi" and "Aarti" are different; "Raju" and "Rajesh" are different; "Ankit" and "Ankita" are different; "Rohan" and "Mohan" are different; "Pooja" and "Puja" are different.
 - Determine if the query name confidently refers to the same person/customer identity.
 
 Return ONLY a JSON response in the following schema:
@@ -768,15 +768,27 @@ Return ONLY a JSON response in the following schema:
 /**
  * Standardize any input name to a canonical English form
  */
+const canonicalNameCache = new Map();
+const CANONICAL_CACHE_TTL_MS = 300000; // 5 minutes
+
 export async function getCanonicalName(name, customers) {
+  const cleanInput = (name || '').toLowerCase().trim();
+  const cached = canonicalNameCache.get(cleanInput);
+  if (cached && Date.now() - cached.timestamp < CANONICAL_CACHE_TTL_MS) {
+    console.log(`[CANONICAL CACHE HIT] getCanonicalName: "${name}" -> "${cached.canonicalName}"`);
+    return cached.canonicalName;
+  }
+
   const apiKeys = getApiKeys();
   if (apiKeys.length === 0) {
     const transliterated = await importTransliterateHindi(name);
-    return toTitleCase(transliterated);
+    const canonical = toTitleCase(transliterated);
+    canonicalNameCache.set(cleanInput, { canonicalName: canonical, timestamp: Date.now() });
+    return canonical;
   }
 
   try {
-    return await callWithGemini(async (genAI) => {
+    const canonical = await callWithGemini(async (genAI) => {
       const model = await getBestModel(genAI);
       const customerNames = customers.map(c => c.name).join(', ');
       
@@ -811,9 +823,14 @@ Return ONLY a JSON response in the following schema (no markdown, no backticks):
       const parsed = JSON.parse(responseText.trim());
       return parsed.canonicalName;
     }, 3000);
+
+    canonicalNameCache.set(cleanInput, { canonicalName: canonical, timestamp: Date.now() });
+    return canonical;
   } catch (error) {
     console.error('Failed to generate canonical name with Gemini:', error);
     const transliterated = await importTransliterateHindi(name);
-    return toTitleCase(transliterated);
+    const canonical = toTitleCase(transliterated);
+    canonicalNameCache.set(cleanInput, { canonicalName: canonical, timestamp: Date.now() });
+    return canonical;
   }
 }

@@ -44,6 +44,37 @@ export function writeDb(data) {
   }
 }
 
+// Short-lived query cache with TTL 5 seconds to reduce duplicate reads
+const queryCache = new Map();
+const CACHE_TTL_MS = 5000;
+
+function getCachedQueryResult(cacheKey) {
+  const cached = queryCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+  return null;
+}
+
+function setCachedQueryResult(cacheKey, data) {
+  queryCache.set(cacheKey, {
+    data,
+    timestamp: Date.now()
+  });
+}
+
+export function invalidateQueryCache(prefix) {
+  if (!prefix) {
+    queryCache.clear();
+    return;
+  }
+  for (const key of queryCache.keys()) {
+    if (key.startsWith(prefix)) {
+      queryCache.delete(key);
+    }
+  }
+}
+
 // ----------------------------------------------------
 // Core Helper & Search Functions for Customer Uniqueness
 // ----------------------------------------------------
@@ -269,7 +300,11 @@ export function areNamesDistinct(name1, name2) {
     ['rahul', 'rakesh'],
     ['pooja', 'puja'],
     ['ankit', 'ankita'],
-    ['rohan', 'mohan']
+    ['rohan', 'mohan'],
+    ['pingu', 'mingu'],
+    ['sonu', 'monu'],
+    ['ramesh', 'dinesh'],
+    ['pawan', 'pankaj']
   ];
 
   for (const [d1, d2] of distinctPairs) {
@@ -766,6 +801,9 @@ function mergeDuplicateCustomersForMerchant(merchantId) {
     });
 
     currentDb.outstanding_balances = newBalances;
+    invalidateQueryCache('customers_');
+    invalidateQueryCache('transactions_');
+    invalidateQueryCache('reminders_');
     writeDb(currentDb);
     console.log(`[MERGE] Consolidation complete for merchant ${targetMerchantId}. Merged ${mergedCount} duplicate profile(s).`);
   } else {
@@ -809,6 +847,13 @@ export function getCustomers(merchantId, dateStr) {
     return getCustomersLocal(targetMerchantId, dateStr);
   }
   
+  const cacheKey = `customers_${targetMerchantId}_${dateStr || 'all'}`;
+  const cached = getCachedQueryResult(cacheKey);
+  if (cached) {
+    console.log(`[QUERY CACHE HIT] getCustomers: ${cacheKey}`);
+    return Promise.resolve(cached);
+  }
+  
   return (async () => {
     try {
       const { supabase } = await import('./supabase.js');
@@ -846,7 +891,7 @@ export function getCustomers(merchantId, dateStr) {
       const transactions = txs || [];
       const balanceMap = new Map((balances || []).map(b => [b.customer_id, b]));
       
-      return (customers || [])
+      const result = (customers || [])
         .map(c => {
           let alias = c.alias;
           let aliases = [c.name];
@@ -904,6 +949,9 @@ export function getCustomers(merchantId, dateStr) {
           };
         })
         .filter(c => c !== null);
+
+      setCachedQueryResult(cacheKey, result);
+      return result;
     } catch (err) {
       console.error('[SUPABASE READ ERROR] Customers query failed:', err.message);
       throw err;
@@ -956,6 +1004,13 @@ export function getTransactions(merchantId, dateStr) {
     return getTransactionsLocal(targetMerchantId, dateStr);
   }
   
+  const cacheKey = `transactions_${targetMerchantId}_${dateStr || 'all'}`;
+  const cached = getCachedQueryResult(cacheKey);
+  if (cached) {
+    console.log(`[QUERY CACHE HIT] getTransactions: ${cacheKey}`);
+    return Promise.resolve(cached);
+  }
+  
   return (async () => {
     try {
       const { supabase } = await import('./supabase.js');
@@ -967,7 +1022,7 @@ export function getTransactions(merchantId, dateStr) {
       const { data: txs, error: tErr } = await query;
       if (tErr) throw tErr;
       
-      return (txs || []).map(t => {
+      const result = (txs || []).map(t => {
         let description = t.description;
         let originalTxId = t.id;
         let originalCustomerId = t.customer_id;
@@ -989,6 +1044,9 @@ export function getTransactions(merchantId, dateStr) {
           date: t.date
         };
       }).sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime());
+
+      setCachedQueryResult(cacheKey, result);
+      return result;
     } catch (err) {
       console.error('[SUPABASE READ ERROR] Transactions query failed:', err.message);
       throw err;
@@ -1134,34 +1192,48 @@ export function addCustomer({ name, phone, alias, aliases, confirmNew = false, m
       const { supabase } = await import('./supabase.js');
       
       const queryStart = Date.now();
-      // Parallelize customer insertion and outstanding balance initialization
-      const [cErrRes, bErrRes] = await Promise.all([
-        supabase.from('customers').insert({
-          id: toUUID(newCustomer.id),
-          merchant_id: toUUID(newCustomer.merchant_id),
-          name: newCustomer.name,
-          phone: newCustomer.phone || '0000000000',
-          alias: JSON.stringify({
-            alias: newCustomer.alias,
-            aliases: newCustomer.aliases,
-            normalizedName: newCustomer.normalizedName,
-            deleted: false,
-            original_id: newCustomer.id,
-            original_merchant_id: newCustomer.merchant_id
-          }),
-          created_at: newCustomer.created_at
-        }),
-        supabase.from('outstanding_balances').insert({
-          customer_id: toUUID(newCustomer.id),
-          merchant_id: toUUID(newCustomer.merchant_id),
-          balance: 0.00,
-          last_updated: newCustomer.created_at
-        })
-      ]);
-      console.log(`[SUPABASE QUERY] addCustomer (Parallelized Insert) - Duration: ${Date.now() - queryStart}ms`);
+      console.log(`[SUPABASE WRITE START] addCustomer - Step 1: Inserting customer "${newCustomer.name}" (ID: ${newCustomer.id})`);
       
-      if (cErrRes.error) throw cErrRes.error;
-      if (bErrRes.error) throw bErrRes.error;
+      const cErrRes = await supabase.from('customers').insert({
+        id: toUUID(newCustomer.id),
+        merchant_id: toUUID(newCustomer.merchant_id),
+        name: newCustomer.name,
+        phone: newCustomer.phone || '0000000000',
+        alias: JSON.stringify({
+          alias: newCustomer.alias,
+          aliases: newCustomer.aliases,
+          normalizedName: newCustomer.normalizedName,
+          deleted: false,
+          original_id: newCustomer.id,
+          original_merchant_id: newCustomer.merchant_id
+        }),
+        created_at: newCustomer.created_at
+      });
+
+      if (cErrRes.error) {
+        console.error('[SUPABASE WRITE ERROR] Customer insert step failed:', cErrRes.error.message);
+        throw cErrRes.error;
+      }
+      
+      console.log(`[SUPABASE WRITE SUCCESS] Customer insert step succeeded in ${Date.now() - queryStart}ms. Step 2: Initializing outstanding balance for customer ID: ${newCustomer.id}`);
+      const balanceStart = Date.now();
+
+      const bErrRes = await supabase.from('outstanding_balances').insert({
+        customer_id: toUUID(newCustomer.id),
+        merchant_id: toUUID(newCustomer.merchant_id),
+        balance: 0.00,
+        last_updated: newCustomer.created_at
+      });
+
+      if (bErrRes.error) {
+        console.error('[SUPABASE WRITE ERROR] Outstanding balance insert step failed:', bErrRes.error.message);
+        throw bErrRes.error;
+      }
+      
+      console.log(`[SUPABASE WRITE SUCCESS] Outstanding balance insert step succeeded in ${Date.now() - balanceStart}ms. Total query time: ${Date.now() - queryStart}ms`);
+      
+      // Invalidate short-lived cache
+      invalidateQueryCache('customers_');
       
       const db = readDb();
       db.customers.push(newCustomer);
@@ -1262,6 +1334,7 @@ function addCustomerLocal({ name, phone, alias, aliases, confirmNew = false, mer
   });
 
   invalidateMerchantSummaries(db, targetMerchantId);
+  invalidateQueryCache('customers_');
   writeDb(db);
   console.log(`[CREATED] New customer profile created locally: "${newCustomer.name}" (ID: ${newCustomer.id}) for merchant ${targetMerchantId}`);
   return { ...newCustomer, balance: 0, last_updated: newCustomer.created_at };
@@ -1301,6 +1374,9 @@ export async function deleteCustomer(id, merchantId) {
     }
   }
 
+  invalidateQueryCache('customers_');
+  invalidateQueryCache('transactions_');
+  invalidateQueryCache('reminders_');
   writeDb(db);
   console.log(`[DELETED] Customer profile soft-deleted locally and permanently purged from cloud: "${customer.name}" (ID: ${id})`);
   return true;
@@ -1444,6 +1520,9 @@ export function updateCustomer(id, { name, phone, alias, address, notes, custome
           return r;
         });
         invalidateMerchantSummaries(db, targetMerchantId);
+        invalidateQueryCache('customers_');
+        invalidateQueryCache('transactions_');
+        invalidateQueryCache('reminders_');
         fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
       }
       
@@ -1567,6 +1646,9 @@ function updateCustomerLocal(id, { name, phone, alias, address, notes, customerT
   });
 
   invalidateMerchantSummaries(db, targetMerchantId);
+  invalidateQueryCache('customers_');
+  invalidateQueryCache('transactions_');
+  invalidateQueryCache('reminders_');
   writeDb(db);
   console.log(`[UPDATED] Customer profile updated locally: "${customer.name}" (ID: ${id})`);
   
@@ -1743,6 +1825,9 @@ export async function deleteTransaction(id, merchantId) {
     }
   }
 
+  invalidateQueryCache('customers_');
+  invalidateQueryCache('transactions_');
+  invalidateQueryCache('reminders_');
   writeDb(db);
   console.log(`[DELETED] Transaction deleted locally and permanently purged from cloud: ID ${id}, recalculated balance for customer ${customerId} to ₹${newBalance}`);
   return true;
@@ -2031,6 +2116,11 @@ export function addTransaction({ customerId, amount, type, description, date, al
         }
       })();
       
+      // Invalidate short-lived cache
+      invalidateQueryCache('transactions_');
+      invalidateQueryCache('reminders_');
+      invalidateQueryCache('customers_');
+      
       const db = readDb();
       db.transactions.push(newTx);
       let localBalanceEntry = db.outstanding_balances.find(b => b.customer_id === customerId && (b.merchant_id || 'merchant_1') === targetMerchantId);
@@ -2106,6 +2196,9 @@ function addTransactionLocal({ customerId, amount, type, description, date, alia
 
   syncRemindersForCustomer(db, customerId, targetMerchantId);
   invalidateSpecificSummary(db, targetMerchantId, txDate);
+  invalidateQueryCache('transactions_');
+  invalidateQueryCache('reminders_');
+  invalidateQueryCache('customers_');
   writeDb(db);
   return { transaction: newTx, newBalance: balanceEntry.balance };
 }
@@ -2114,6 +2207,13 @@ export function getReminders(merchantId, dateStr) {
   const targetMerchantId = merchantId || 'merchant_1';
   if (process.env.DISABLE_SUPABASE_SYNC === 'true' || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
     return getRemindersLocal(targetMerchantId, dateStr);
+  }
+  
+  const cacheKey = `reminders_${targetMerchantId}_${dateStr || 'all'}`;
+  const cached = getCachedQueryResult(cacheKey);
+  if (cached) {
+    console.log(`[QUERY CACHE HIT] getReminders: ${cacheKey}`);
+    return Promise.resolve(cached);
   }
   
   return (async () => {
@@ -2172,12 +2272,12 @@ export function getReminders(merchantId, dateStr) {
         if (balance > 0) {
           const credits = customerTxs
             .filter(t => t.type === 'credit')
-            .sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime())
+            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
             .map(t => ({ date: t.date, amount: t.amount, remaining: t.amount }));
 
           const collections = customerTxs
             .filter(t => t.type === 'collection')
-            .sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime());
+            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
           for (const col of collections) {
             let colAmount = col.amount;
@@ -2221,6 +2321,7 @@ export function getReminders(merchantId, dateStr) {
         }
       }
       
+      setCachedQueryResult(cacheKey, remindersList);
       return remindersList;
     } catch (err) {
       console.error('[SUPABASE READ ERROR] Reminders query failed:', err.message);
@@ -2332,23 +2433,33 @@ export async function syncFromSupabase() {
 
   const startTime = Date.now();
   try {
-    console.log('[SUPABASE SYNC] Fetching remote state from Supabase...');
+    console.log('[LEDGER SYNC START] Fetching remote state from Supabase...');
     const { supabase } = await import('./supabase.js');
 
-    const { data: users, error: uErr } = await supabase.from('users').select('*');
+    const [uRes, cRes, tRes, sRes, rRes] = await Promise.all([
+      supabase.from('users').select('*'),
+      supabase.from('customers').select('*'),
+      supabase.from('transactions').select('*'),
+      supabase.from('daily_summaries').select('*'),
+      supabase.from('reminders').select('*')
+    ]);
+
+    const { data: users, error: uErr } = uRes;
     if (uErr) throw uErr;
 
-    const { data: customers, error: cErr } = await supabase.from('customers').select('*');
+    const { data: customers, error: cErr } = cRes;
     if (cErr) throw cErr;
 
-    const { data: transactions, error: tErr } = await supabase.from('transactions').select('*');
+    const { data: transactions, error: tErr } = tRes;
     if (tErr) throw tErr;
 
-    const { data: summaries, error: sErr } = await supabase.from('daily_summaries').select('*');
+    const { data: summaries, error: sErr } = sRes;
     if (sErr) throw sErr;
 
-    const { data: reminders, error: rErr } = await supabase.from('reminders').select('*');
+    const { data: reminders, error: rErr } = rRes;
     if (rErr) throw rErr;
+
+    console.log(`[LEDGER SYNC END] Fetching remote state complete - Duration: ${Date.now() - startTime}ms`);
 
     const dbData = {
       users: [],
@@ -2518,12 +2629,13 @@ export async function syncFromSupabase() {
       });
     }
 
-    fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), 'utf-8');
-    console.log(`[SUPABASE SYNC] Successfully loaded cloud state into local db.json in ${Date.now() - startTime}ms.`);
-  } catch (err) {
-    console.error(`[SUPABASE SYNC ERROR] Initial sync failed: ${err.message} in ${Date.now() - startTime}ms.`);
-  }
-}
+     fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), 'utf-8');
+     invalidateQueryCache();
+     console.log(`[SUPABASE SYNC] Successfully loaded cloud state into local db.json in ${Date.now() - startTime}ms.`);
+   } catch (err) {
+     console.error(`[SUPABASE SYNC ERROR] Initial sync failed: ${err.message} in ${Date.now() - startTime}ms.`);
+   }
+ }
 
 export async function syncToSupabase(db) {
   if (process.env.DISABLE_SUPABASE_SYNC === 'true') return;
@@ -2853,6 +2965,9 @@ export async function mergeSpecificCustomers(masterId, duplicateId, merchantId) 
   });
   
   invalidateMerchantSummaries(db, targetMerchantId);
+  invalidateQueryCache('customers_');
+  invalidateQueryCache('transactions_');
+  invalidateQueryCache('reminders_');
   writeDb(db);
   
   console.log(`[MERGE SPECIFIC] Consolidation complete for merchant ${targetMerchantId}.`);

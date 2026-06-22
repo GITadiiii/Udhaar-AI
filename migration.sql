@@ -98,6 +98,11 @@ CREATE INDEX IF NOT EXISTS idx_transactions_merchant_date ON transactions (merch
 CREATE INDEX IF NOT EXISTS idx_transactions_customer_date ON transactions (customer_id, date DESC);
 CREATE INDEX IF NOT EXISTS idx_reminders_customer ON reminders (customer_id);
 CREATE INDEX IF NOT EXISTS idx_customers_merchant_name ON customers (merchant_id, name);
+CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
+CREATE INDEX IF NOT EXISTS idx_customers_created_at ON customers (created_at);
+CREATE INDEX IF NOT EXISTS idx_users_created_at ON users (created_at);
+CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
+CREATE INDEX IF NOT EXISTS idx_summaries_created_at ON daily_summaries (created_at);
 
 -- 7. Enable Row-Level Security (RLS) on all tables for merchant isolation
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
