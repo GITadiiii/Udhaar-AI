@@ -56,6 +56,7 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
   const [alias, setAlias] = useState('');
   const [loading, setLoading] = useState(false);
   const [showWarning, setShowWarning] = useState(false);
+  const [addError, setAddError] = useState('');
 
   // Edit form state
   const [customerToEdit, setCustomerToEdit] = useState<Customer | null>(null);
@@ -122,6 +123,7 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
     
     setLoading(true);
     setShowWarning(false);
+    setAddError('');
     const timeoutId = setTimeout(() => {
       setShowWarning(true);
     }, 10000);
@@ -132,8 +134,9 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
       setPhone('');
       setAlias('');
       setIsAddModalOpen(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setAddError(err.message || 'Failed to create customer');
     } finally {
       clearTimeout(timeoutId);
       setLoading(false);
@@ -202,6 +205,7 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
           onClick={() => {
             setIsAddModalOpen(true);
             setShowWarning(false);
+            setAddError('');
           }}
           className="flex items-center gap-2 bg-brand-green hover:bg-green-700 text-white font-semibold px-5 py-3 rounded-xl shadow-soft hover:shadow-premium transition-all duration-300"
         >
@@ -505,6 +509,7 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
               onClick={() => {
                 setIsAddModalOpen(false);
                 setShowWarning(false);
+                setAddError('');
               }}
               className="absolute right-4 top-4 p-1.5 hover:bg-brand-gray-100 rounded-xl text-brand-gray-500 transition-colors"
             >
@@ -513,6 +518,13 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
 
             <h2 className="text-2xl font-bold text-brand-dark mb-2">New Customer</h2>
             <p className="text-sm text-brand-gray-500 mb-6">Create a ledger account to track future credit records.</p>
+
+            {addError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-xl text-brand-danger text-sm font-semibold flex items-center gap-2">
+                <AlertTriangle size={16} />
+                <span>{addError}</span>
+              </div>
+            )}
 
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
@@ -572,6 +584,7 @@ export default function Customers({ customers, onAddCustomer, onSelectCustomer, 
                   onClick={() => {
                     setIsAddModalOpen(false);
                     setShowWarning(false);
+                    setAddError('');
                   }}
                   className="flex-1 border border-brand-gray-200 hover:bg-brand-gray-50 text-brand-gray-700 font-semibold py-3 rounded-xl transition-colors"
                 >

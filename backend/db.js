@@ -1191,8 +1191,10 @@ export function addCustomer({ name, phone, alias, aliases, confirmNew = false, m
       
       const { supabase } = await import('./supabase.js');
       
-      const queryStart = Date.now();
-      console.log(`[SUPABASE WRITE START] addCustomer - Step 1: Inserting customer "${newCustomer.name}" (ID: ${newCustomer.id})`);
+            console.log(`[CUSTOMER CREATE START]`);
+      console.log(`Merchant ID: ${newCustomer.merchant_id}`);
+      console.log(`Customer Name: ${newCustomer.name}`);
+      console.log(`[CUSTOMER INSERT ATTEMPT]`);
       
       const cErrRes = await supabase.from('customers').insert({
         id: toUUID(newCustomer.id),
@@ -1211,11 +1213,12 @@ export function addCustomer({ name, phone, alias, aliases, confirmNew = false, m
       });
 
       if (cErrRes.error) {
-        console.error('[SUPABASE WRITE ERROR] Customer insert step failed:', cErrRes.error.message);
+        console.error(`[CUSTOMER INSERT FAILURE]`);
+        console.error(`Exact database error: ${cErrRes.error.message}`);
         throw cErrRes.error;
       }
       
-      console.log(`[SUPABASE WRITE SUCCESS] Customer insert step succeeded in ${Date.now() - queryStart}ms. Step 2: Initializing outstanding balance for customer ID: ${newCustomer.id}`);
+      console.log(`[CUSTOMER INSERT SUCCESS]`);
       const balanceStart = Date.now();
 
       const bErrRes = await supabase.from('outstanding_balances').insert({
@@ -1234,6 +1237,12 @@ export function addCustomer({ name, phone, alias, aliases, confirmNew = false, m
       
       // Invalidate short-lived cache
       invalidateQueryCache('customers_');
+      try {
+        const { clearSemanticMatchCache } = await import('./services/gemini.js');
+        clearSemanticMatchCache();
+      } catch (e) {
+        console.warn('[CACHE] Failed to clear semantic match cache:', e.message);
+      }
       
       const db = readDb();
       db.customers.push(newCustomer);
@@ -1377,6 +1386,12 @@ export async function deleteCustomer(id, merchantId) {
   invalidateQueryCache('customers_');
   invalidateQueryCache('transactions_');
   invalidateQueryCache('reminders_');
+  try {
+    const { clearSemanticMatchCache } = await import('./services/gemini.js');
+    clearSemanticMatchCache();
+  } catch (e) {
+    console.warn('[CACHE] Failed to clear semantic match cache:', e.message);
+  }
   writeDb(db);
   console.log(`[DELETED] Customer profile soft-deleted locally and permanently purged from cloud: "${customer.name}" (ID: ${id})`);
   return true;
@@ -1523,6 +1538,12 @@ export function updateCustomer(id, { name, phone, alias, address, notes, custome
         invalidateQueryCache('customers_');
         invalidateQueryCache('transactions_');
         invalidateQueryCache('reminders_');
+        try {
+          const { clearSemanticMatchCache } = await import('./services/gemini.js');
+          clearSemanticMatchCache();
+        } catch (e) {
+          console.warn('[CACHE] Failed to clear semantic match cache:', e.message);
+        }
         fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
       }
       
@@ -2968,6 +2989,12 @@ export async function mergeSpecificCustomers(masterId, duplicateId, merchantId) 
   invalidateQueryCache('customers_');
   invalidateQueryCache('transactions_');
   invalidateQueryCache('reminders_');
+  try {
+    const { clearSemanticMatchCache } = await import('./services/gemini.js');
+    clearSemanticMatchCache();
+  } catch (e) {
+    console.warn('[CACHE] Failed to clear semantic match cache:', e.message);
+  }
   writeDb(db);
   
   console.log(`[MERGE SPECIFIC] Consolidation complete for merchant ${targetMerchantId}.`);

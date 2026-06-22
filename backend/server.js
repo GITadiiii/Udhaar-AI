@@ -53,6 +53,45 @@ const getMerchantId = (req) => {
   return req.headers['x-merchant-id'] || 'merchant_1';
 };
 
+const validateMerchant = async (req, res, next) => {
+  const merchantId = getMerchantId(req);
+  if (!merchantId) {
+    return res.status(403).json({ error: 'Merchant ID is required', code: 'MERCHANT_MISSING' });
+  }
+
+  try {
+    const db = readDb();
+    const existsLocal = db.users && db.users.some(u => u.id === merchantId);
+
+    let existsSupabase = false;
+    if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY && process.env.DISABLE_SUPABASE_SYNC !== 'true') {
+      const { supabase } = await import('./supabase.js');
+      const { data, error } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', toUUID(merchantId))
+        .maybeSingle();
+      if (!error && data) {
+        existsSupabase = true;
+      }
+    } else {
+      existsSupabase = true;
+    }
+
+    if (!existsLocal && !existsSupabase) {
+      console.error(`[MERCHANT VALIDATION FAILURE] Merchant ID: ${merchantId} does not exist in users table.`);
+      return res.status(403).json({
+        error: 'Merchant record missing from database.',
+        code: 'MERCHANT_MISSING'
+      });
+    }
+  } catch (err) {
+    console.error('[MERCHANT VALIDATION ERROR]', err.message);
+  }
+
+  next();
+};
+
 const app = express();
 app.get('/api/test-supabase', async (req, res) => {
   try {
@@ -122,7 +161,7 @@ app.get('/api/gemini/metrics', (req, res) => {
 });
 
 // 1. Get Customers (includes outstanding balance)
-app.get('/api/customers', async (req, res) => {
+app.get('/api/customers', validateMerchant, async (req, res) => {
   const startTime = Date.now();
   const merchantId = getMerchantId(req);
   console.log(`[CUSTOMERS START] Merchant: ${merchantId}`);
@@ -138,7 +177,7 @@ app.get('/api/customers', async (req, res) => {
 });
 
 // Get All Transactions for Merchant
-app.get('/api/transactions', async (req, res) => {
+app.get('/api/transactions', validateMerchant, async (req, res) => {
   const startTime = Date.now();
   const merchantId = getMerchantId(req);
   console.log(`[DASHBOARD REFRESH START] Get Transactions. Merchant: ${merchantId}`);
@@ -154,7 +193,7 @@ app.get('/api/transactions', async (req, res) => {
 });
 
 // 2. Add New Customer (with Canonical English standardization)
-app.post('/api/customers', async (req, res) => {
+app.post('/api/customers', validateMerchant, async (req, res) => {
   const startTime = Date.now();
   const merchantId = getMerchantId(req);
   const { name, phone, alias, confirmNew } = req.body;
@@ -342,7 +381,7 @@ Decision: ${decision}`);
 });
 
 // 3. Get Detailed Customer Ledger
-app.get('/api/customers/:id/ledger', async (req, res) => {
+app.get('/api/customers/:id/ledger', validateMerchant, async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
     const { id } = req.params;
@@ -358,7 +397,7 @@ app.get('/api/customers/:id/ledger', async (req, res) => {
 });
 
 // Update Customer details
-app.put('/api/customers/:id', async (req, res) => {
+app.put('/api/customers/:id', validateMerchant, async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
     const { id } = req.params;
@@ -385,7 +424,7 @@ app.put('/api/customers/:id', async (req, res) => {
 });
 
 // Delete Customer (and cleanup associated records)
-app.delete('/api/customers/:id', async (req, res) => {
+app.delete('/api/customers/:id', validateMerchant, async (req, res) => {
   const startTime = Date.now();
   const merchantId = getMerchantId(req);
   const { id } = req.params;
@@ -405,7 +444,7 @@ app.delete('/api/customers/:id', async (req, res) => {
 });
 
 // Delete Transaction
-app.delete('/api/transactions/:id', async (req, res) => {
+app.delete('/api/transactions/:id', validateMerchant, async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
     const { id } = req.params;
@@ -421,7 +460,7 @@ app.delete('/api/transactions/:id', async (req, res) => {
 });
 
 // 4. Record a Transaction (Credit/Collection)
-app.post('/api/transactions', async (req, res) => {
+app.post('/api/transactions', validateMerchant, async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
     const { customerId, amount, type, description, date, aliasSpoken } = req.body;
@@ -439,7 +478,7 @@ app.post('/api/transactions', async (req, res) => {
 });
 
 // 5. Process Voice Recording (AI Extraction & Duplicate Resolution check)
-app.post('/api/voice/process', async (req, res) => {
+app.post('/api/voice/process', validateMerchant, async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
     const { transcript } = req.body;
@@ -524,7 +563,7 @@ app.post('/api/voice/process', async (req, res) => {
 });
 
 // 6. Get AI Daily Summary
-app.get('/api/summary/daily', async (req, res) => {
+app.get('/api/summary/daily', validateMerchant, async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
     // Default to the current system date in user local timezone
@@ -615,7 +654,7 @@ app.get('/api/summary/daily', async (req, res) => {
 });
 
 // 7. Get Reminders
-app.get('/api/reminders', async (req, res) => {
+app.get('/api/reminders', validateMerchant, async (req, res) => {
   try {
     const merchantId = getMerchantId(req);
     const dateStr = req.query.date; // YYYY-MM-DD

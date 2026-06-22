@@ -71,6 +71,12 @@
       "name": "Ritu",
       "business_name": "R.k kirana",
       "phone": "8907655678"
+    },
+    {
+      "id": "merchant_1",
+      "name": "Karan Kumar",
+      "business_name": "Karan Kirana Store",
+      "phone": "+919876543210"
     }
   ],
   "customers": [

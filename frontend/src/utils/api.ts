@@ -54,6 +54,24 @@ export async function fetchWithTimeout(
   }
 }
 
+export async function checkResponse(res: Response, defaultMessage: string) {
+  if (!res.ok) {
+    let errorMsg = defaultMessage;
+    let errCode = undefined;
+    try {
+      const errorData = await res.json();
+      errorMsg = errorData.error || defaultMessage;
+      errCode = errorData.code;
+    } catch (e) {
+      // Ignore parse failure
+    }
+    const err = new Error(errorMsg) as any;
+    err.status = res.status;
+    err.code = errCode;
+    throw err;
+  }
+}
+
 // Memory cache registries for fast read and SWR operations
 const customersCache: Record<string, Customer[]> = {};
 const transactionsCache: Record<string, Transaction[]> = {};
@@ -188,7 +206,7 @@ export async function fetchCustomers(date?: string, forceRefresh = false): Promi
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
   });
-  if (!res.ok) throw new Error('Failed to fetch customers');
+  await checkResponse(res, 'Failed to fetch customers');
   const data = await res.json();
   customersCache[cacheKey] = data;
   setCachedData('customers', cacheKey, data);
@@ -213,7 +231,7 @@ export async function fetchTransactions(date?: string, forceRefresh = false): Pr
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
   });
-  if (!res.ok) throw new Error('Failed to fetch transactions');
+  await checkResponse(res, 'Failed to fetch transactions');
   const data = await res.json();
   transactionsCache[cacheKey] = data;
   setCachedData('transactions', cacheKey, data);
@@ -226,7 +244,7 @@ export async function createCustomer(name: string, phone: string, alias?: string
     headers: getHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ name, phone, alias, confirmNew })
   });
-  if (!res.ok) throw new Error('Failed to create customer');
+  await checkResponse(res, 'Failed to create customer');
   return res.json();
 }
 
@@ -235,7 +253,7 @@ export async function deleteCustomer(id: string): Promise<any> {
     method: 'DELETE',
     headers: getHeaders()
   });
-  if (!res.ok) throw new Error('Failed to delete customer');
+  await checkResponse(res, 'Failed to delete customer');
   return res.json();
 }
 
@@ -255,10 +273,7 @@ export async function updateCustomer(
     headers: getHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(updatedFields)
   });
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}));
-    throw new Error(errorData.error || 'Failed to update customer');
-  }
+  await checkResponse(res, 'Failed to update customer');
   return res.json();
 }
 
@@ -280,7 +295,7 @@ export async function fetchLedger(customerId: string, date?: string, forceRefres
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
   });
-  if (!res.ok) throw new Error('Failed to fetch customer ledger');
+  await checkResponse(res, 'Failed to fetch customer ledger');
   const data = await res.json();
   ledgerCache[cacheKey] = data;
   setCachedData('ledger', cacheKey, data);
@@ -300,7 +315,7 @@ export async function createTransaction(tx: {
     headers: getHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(tx)
   });
-  if (!res.ok) throw new Error('Failed to record transaction');
+  await checkResponse(res, 'Failed to record transaction');
   return res.json();
 }
 
@@ -320,7 +335,7 @@ export async function processVoice(transcript: string): Promise<VoiceProcessResu
     headers: getHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ transcript })
   });
-  if (!res.ok) throw new Error('Failed to process voice transcript');
+  await checkResponse(res, 'Failed to process voice transcript');
   return res.json();
 }
 
@@ -342,7 +357,7 @@ export async function fetchDailySummary(date?: string, forceRefresh = false): Pr
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
   });
-  if (!res.ok) throw new Error('Failed to fetch daily summary');
+  await checkResponse(res, 'Failed to fetch daily summary');
   const data = await res.json();
   summaryCache[cacheKey] = data;
   setCachedData('summaries', cacheKey, data);
@@ -367,7 +382,7 @@ export async function fetchReminders(date?: string, forceRefresh = false): Promi
   const res = await fetchWithTimeout(url, {
     headers: getHeaders()
   });
-  if (!res.ok) throw new Error('Failed to fetch reminders');
+  await checkResponse(res, 'Failed to fetch reminders');
   const data = await res.json();
   remindersCache[cacheKey] = data;
   setCachedData('reminders', cacheKey, data);
@@ -379,7 +394,7 @@ export async function deleteTransaction(id: string): Promise<any> {
     method: 'DELETE',
     headers: getHeaders()
   });
-  if (!res.ok) throw new Error('Failed to delete transaction');
+  await checkResponse(res, 'Failed to delete transaction');
   return res.json();
 }
 

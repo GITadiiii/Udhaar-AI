@@ -9,6 +9,13 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- Ensure a default merchant exists so foreign key constraints don't fail for orphaned records
+INSERT INTO users (id, name, business_name, phone)
+VALUES 
+  ('00000000-0000-0000-0000-000000000000', 'Default Merchant', 'Default Store', '0000000000'),
+  ('24492c85-00ae-4a60-af07-a717b25e0b3a', 'Karan Kumar', '{"business_name":"Karan Kirana Store","original_id":"merchant_1"}', '9876543210')
+ON CONFLICT (phone) DO NOTHING;
+
 -- 2. Customers Table
 CREATE TABLE IF NOT EXISTS customers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

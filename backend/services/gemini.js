@@ -703,17 +703,33 @@ Create a summary that matches this persona:
   }
 }
 
+const semanticMatchCache = new Map();
+const SEMANTIC_CACHE_TTL_MS = 300000; // 5 minutes
+
+export function clearSemanticMatchCache() {
+  semanticMatchCache.clear();
+  canonicalNameCache.clear();
+  console.log('[GEMINI CACHE] Cleared semantic match and canonical name caches.');
+}
+
 /**
  * Resolve semantic matches (translations, script variants) using Gemini
  */
 export async function resolveSemanticMatch(queryName, customers) {
+  const cleanInput = (queryName || '').toLowerCase().trim();
+  const cached = semanticMatchCache.get(cleanInput);
+  if (cached && Date.now() - cached.timestamp < SEMANTIC_CACHE_TTL_MS) {
+    console.log(`[SEMANTIC CACHE HIT] resolveSemanticMatch: "${queryName}" -> "${cached.matchedCustomerId}"`);
+    return cached.matchedCustomerId;
+  }
+
   const apiKeys = getApiKeys();
   if (apiKeys.length === 0) {
     return null;
   }
 
   try {
-    return await callWithGemini(async (genAI) => {
+    const resultId = await callWithGemini(async (genAI) => {
       const model = await getBestModel(genAI);
       
       const customerListString = customers.map(c => 
@@ -759,6 +775,9 @@ Return ONLY a JSON response in the following schema:
       
       return null;
     }, 3000);
+
+    semanticMatchCache.set(cleanInput, { matchedCustomerId: resultId, timestamp: Date.now() });
+    return resultId;
   } catch (error) {
     console.error('Gemini semantic lookup failed:', error);
     return null;

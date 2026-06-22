@@ -225,8 +225,16 @@ export default function App() {
       const bootSyncTime = performance.now() - ((window as any).APP_START_TIME || performance.now());
       const querySyncTime = performance.now() - syncStart;
       console.log(`[PERFORMANCE] App Open -> Sync Complete: Fresh UI loaded in ${bootSyncTime.toFixed(2)}ms (Sync query took ${querySyncTime.toFixed(2)}ms)`);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to sync database in background:', err);
+      if (err.status === 403 || err.code === 'MERCHANT_MISSING' || err.message?.includes('Merchant record missing')) {
+        alert('Your merchant account was not found in the database. Redirecting to registration.');
+        localStorage.removeItem('udhaar_merchant_id');
+        localStorage.removeItem('udhaar_merchant_name');
+        localStorage.removeItem('udhaar_shop_name');
+        localStorage.removeItem('udhaar_merchant_phone');
+        handleLogout();
+      }
     } finally {
       clearTimeout(spinnerTimeout);
       setIsSyncing(false);
@@ -829,37 +837,49 @@ export default function App() {
                   <Customers 
                     customers={customers}
                     onAddCustomer={async (newC) => {
-                      const result = await createCustomer(newC.name, newC.phone, newC.alias);
-                      if (result.status === 'multiple_matches') {
-                        alert(`A customer with a similar name already exists: ${result.candidates.map((c: any) => c.name).join(', ')}. Please use a unique name.`);
-                        throw new Error('Duplicate customer exists');
+                      try {
+                        const result = await createCustomer(newC.name, newC.phone, newC.alias);
+                        if (result.status === 'multiple_matches') {
+                          alert(`A customer with a similar name already exists: ${result.candidates.map((c: any) => c.name).join(', ')}. Please use a unique name.`);
+                          throw new Error('Duplicate customer exists');
+                        }
+                        
+                        clearCacheForDate(selectedDate);
+                        
+                        const newCreatedCustomer = {
+                          id: result.id,
+                          merchant_id: localStorage.getItem('udhaar_merchant_id') || 'merchant_1',
+                          name: result.name,
+                          displayName: result.name,
+                          alias: result.alias || '',
+                          phone: result.phone || '',
+                          created_at: result.created_at || new Date().toISOString(),
+                          balance: 0,
+                          last_updated: result.created_at || new Date().toISOString(),
+                          normalizedName: result.name.toLowerCase().replace(/\s+/g, ''),
+                          aliases: [result.name],
+                          deleted: false
+                        };
+                        setCustomers(prev => [...prev.filter(c => c.id !== result.id), newCreatedCustomer]);
+                        
+                        loadData(selectedDate, true);
+                        
+                        if (result.was_existing) {
+                          alert(`Customer "${result.name}" already exists. Opening their ledger.`);
+                          handleNavigate('customers', { openLedgerId: result.id });
+                        }
+                        return result;
+                      } catch (err: any) {
+                        if (err.status === 403 || err.code === 'MERCHANT_MISSING' || err.message?.includes('Merchant record missing')) {
+                          alert('Your merchant account was not found in the database. Redirecting to registration.');
+                          localStorage.removeItem('udhaar_merchant_id');
+                          localStorage.removeItem('udhaar_merchant_name');
+                          localStorage.removeItem('udhaar_shop_name');
+                          localStorage.removeItem('udhaar_merchant_phone');
+                          handleLogout();
+                        }
+                        throw err;
                       }
-                      
-                      clearCacheForDate(selectedDate);
-                      
-                      const newCreatedCustomer = {
-                        id: result.id,
-                        merchant_id: localStorage.getItem('udhaar_merchant_id') || 'merchant_1',
-                        name: result.name,
-                        displayName: result.name,
-                        alias: result.alias || '',
-                        phone: result.phone || '',
-                        created_at: result.created_at || new Date().toISOString(),
-                        balance: 0,
-                        last_updated: result.created_at || new Date().toISOString(),
-                        normalizedName: result.name.toLowerCase().replace(/\s+/g, ''),
-                        aliases: [result.name],
-                        deleted: false
-                      };
-                      setCustomers(prev => [...prev.filter(c => c.id !== result.id), newCreatedCustomer]);
-                      
-                      loadData(selectedDate, true);
-                      
-                      if (result.was_existing) {
-                        alert(`Customer "${result.name}" already exists. Opening their ledger.`);
-                        handleNavigate('customers', { openLedgerId: result.id });
-                      }
-                      return result;
                     }}
                     onSelectCustomer={(id) => setSelectedCustomerId(id)}
                     onDeleteCustomer={async (id) => {

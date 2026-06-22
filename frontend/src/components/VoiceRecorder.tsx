@@ -378,9 +378,9 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
       // Navigate to ledger on completion
       onNavigate('customers', { openLedgerId: customerId });
       handleDiscard();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Error saving transaction. Please try again.');
+      alert(`Error saving transaction: ${err.message || 'Please try again.'}`);
     } finally {
       setIsSaving(false);
       setSaveProgress('');
