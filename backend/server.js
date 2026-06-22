@@ -26,7 +26,8 @@ import {
   extractTransactionFromVoice, 
   generateDailySummary,
   resolveSemanticMatch,
-  getCanonicalName
+  getCanonicalName,
+  getGeminiMetrics
 } from './services/gemini.js';
 
 dotenv.config();
@@ -103,6 +104,11 @@ app.post('/api/users', async (req, res) => {
   }
 });
 
+// Get Gemini Performance Metrics
+app.get('/api/gemini/metrics', (req, res) => {
+  res.json(getGeminiMetrics());
+});
+
 // 1. Get Customers (includes outstanding balance)
 app.get('/api/customers', async (req, res) => {
   const startTime = Date.now();
@@ -172,56 +178,37 @@ app.post('/api/customers', async (req, res) => {
     }
 
     // Standard flow (confirmNew is false)
-    const canonicalName = await getCanonicalName(name, customers);
-    const normCanonicalName = normalizeCustomerName(canonicalName);
-    const matches = await findExistingCustomer(canonicalName, phone, merchantId, customers);
+    // 1. Clean customer name locally first
+    const { sanitizeCustomerName } = await import('./db.js');
+    const localCanonicalName = sanitizeCustomerName(name);
+    const normLocalName = normalizeCustomerName(localCanonicalName);
 
-    // 1. Exact normalized name match: Always prevent duplication and return existing
-    const exact = matches.find(m => normalizeCustomerName(m.name) === normCanonicalName);
+    // 2. Perform fast local match using local canonical name
+    const matches = await findExistingCustomer(localCanonicalName, phone, merchantId, customers);
+
+    // Check for exact match locally (normalized name or alias matches)
+    const exact = matches.find(m => normalizeCustomerName(m.name) === normLocalName);
     if (exact) {
-      console.log(`[PREVENTED] Duplicate customer creation blocked at API layer for canonical name: "${canonicalName}" (original: "${name}"). Returning existing ID: ${exact.id}`);
-      
+      console.log(`[PREVENTED] Duplicate customer creation blocked at API layer (Local Exact Match) for: "${localCanonicalName}" (original: "${name}"). Returning existing ID: ${exact.id}`);
       const { learnAlias } = await import('./db.js');
       learnAlias(exact.id, name);
-      
       console.log(`[CUSTOMER RESPONSE SENT] in ${Date.now() - startTime}ms`);
-      console.log(`[TOTAL DURATION] customer creation total: ${Date.now() - startTime}ms`);
       return res.json({ ...exact, was_existing: true });
     }
 
-    // 2. Step 7: Try Gemini semantic matching if local matches is empty
-    if (matches.length === 0) {
-      const semanticMatchedId = await resolveSemanticMatch(canonicalName, customers);
-      if (semanticMatchedId) {
-        const matchedCust = customers.find(c => c.id === semanticMatchedId);
-        if (matchedCust) {
-          console.log(`[PREVENTED] Gemini semantic match resolved query "${canonicalName}" (original: "${name}") to existing customer "${matchedCust.name}" (ID: ${matchedCust.id})`);
-          
-          const { learnAlias } = await import('./db.js');
-          learnAlias(matchedCust.id, canonicalName);
-          learnAlias(matchedCust.id, name);
-          
-          console.log(`[CUSTOMER RESPONSE SENT] in ${Date.now() - startTime}ms`);
-          console.log(`[TOTAL DURATION] customer creation total: ${Date.now() - startTime}ms`);
-          return res.json({ ...matchedCust, was_existing: true });
-        }
-      }
-    }
-
-    // 3. Multiple matches or fuzzy matches found: return candidate list for smart resolution
+    // Check for multiple candidate matches locally (fuzzy match threshold >= 0.70)
     if (matches.length > 0) {
-      console.log(`[LOOKUP] Matches found for new customer request canonical name "${canonicalName}": [${matches.map(m => m.name).join(', ')}]. Prompting smart resolution.`);
+      console.log(`[LOOKUP] Local matches found for new customer request: [${matches.map(m => m.name).join(', ')}]. Prompting smart resolution.`);
       console.log(`[CUSTOMER RESPONSE SENT] in ${Date.now() - startTime}ms`);
-      console.log(`[TOTAL DURATION] customer creation total: ${Date.now() - startTime}ms`);
       return res.json({
         status: 'multiple_matches',
         candidates: matches
       });
     }
 
-    // 4. No matches - insert customer
+    // 3. Create the customer profile immediately using local canonical name (takes ~150-300ms)
     const customer = await addCustomer({ 
-      name: canonicalName, 
+      name: localCanonicalName, 
       phone, 
       alias, 
       aliases: [name], 
@@ -229,10 +216,56 @@ app.post('/api/customers', async (req, res) => {
       merchantId,
       preloadedCustomers: customers
     });
-    console.log(`[CUSTOMER INSERT SUCCESS] in ${Date.now() - startTime}ms`);
+    
+    console.log(`[CUSTOMER INSERT SUCCESS] (Async AI enrichment queued) in ${Date.now() - startTime}ms`);
     console.log(`[CUSTOMER RESPONSE SENT] in ${Date.now() - startTime}ms`);
-    console.log(`[TOTAL DURATION] customer creation total: ${Date.now() - startTime}ms`);
+    
+    // Return HTTP 201 response immediately to the client
     res.status(201).json(customer);
+
+    // 4. Run AI enrichment and semantic duplicate matching in the background
+    (async () => {
+      const bgStartTime = Date.now();
+      try {
+        console.log(`[BACKGROUND AI START] Standardizing customer ID: ${customer.id} ("${localCanonicalName}")`);
+        
+        // Refresh customer list to ensure we have latest records in memory
+        const currentCustomers = await getCustomers(merchantId);
+        
+        // Step A: Standardize to canonical English name using Gemini
+        const canonicalName = await getCanonicalName(name, currentCustomers);
+        
+        let targetName = localCanonicalName;
+        
+        if (canonicalName && canonicalName !== localCanonicalName && canonicalName !== 'Unknown Customer') {
+          targetName = canonicalName;
+          console.log(`[BACKGROUND AI] Gemini standardized name to: "${canonicalName}" (was: "${localCanonicalName}")`);
+          
+          // Update customer display name and aliases
+          const { updateCustomerNameInDb } = await import('./db.js');
+          await updateCustomerNameInDb(customer.id, canonicalName, merchantId);
+        }
+
+        // Step B: Run Gemini semantic duplicate checks
+        const semanticMatchedId = await resolveSemanticMatch(targetName, currentCustomers.filter(c => c.id !== customer.id));
+        if (semanticMatchedId) {
+          const matchedCust = currentCustomers.find(c => c.id === semanticMatchedId);
+          if (matchedCust) {
+            console.log(`[BACKGROUND AI DETECTED DUPLICATE] Merging duplicate customer ID ${customer.id} ("${targetName}") into master customer ${matchedCust.id} ("${matchedCust.name}")`);
+            
+            // Execute background auto-merge consolidation
+            const { mergeSpecificCustomers } = await import('./db.js');
+            await mergeSpecificCustomers(matchedCust.id, customer.id, merchantId);
+            
+            console.log(`[BACKGROUND AI MERGE SUCCESS] Consolidating complete for merchant ${merchantId}`);
+          }
+        }
+        
+        console.log(`[BACKGROUND AI SUCCESS] Customer ID ${customer.id} processed in ${Date.now() - bgStartTime}ms`);
+      } catch (bgErr) {
+        console.error(`[BACKGROUND AI ERROR] Enrichment or merge failed: ${bgErr.message}`);
+      }
+    })();
   } catch (error) {
     console.error(`[CUSTOMER CREATE FAILURE] ${error.message} in ${Date.now() - startTime}ms`);
     res.status(500).json({ error: error.message });

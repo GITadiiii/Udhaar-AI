@@ -28,6 +28,35 @@ function getApiKeys() {
 
 let currentKeyIndex = 0;
 
+// Circuit Breaker State Variables
+let circuitState = 'CLOSED'; // 'CLOSED', 'OPEN', 'HALF-OPEN'
+let consecutiveFailures = 0;
+let lastStateChangeTime = Date.now();
+const FAILURE_THRESHOLD = 3;
+const COOLDOWN_MS = 30000; // 30 seconds
+
+// Performance Metrics
+export const geminiMetrics = {
+  requestCount: 0,
+  successCount: 0,
+  timeoutCount: 0,
+  error503Count: 0,
+  otherErrorCount: 0,
+  fallbackCount: 0,
+  totalDurationMs: 0
+};
+
+export function getGeminiMetrics() {
+  const successRate = geminiMetrics.requestCount > 0
+    ? ((geminiMetrics.successCount / geminiMetrics.requestCount) * 100).toFixed(1) + '%'
+    : '0%';
+  return {
+    ...geminiMetrics,
+    successRate,
+    circuitState
+  };
+}
+
 /**
  * Helper to title case a string
  */
@@ -154,13 +183,27 @@ async function getBestModel(genAI) {
 }
 
 /**
- * Wraps Gemini API calls with round-robin load balancing, automatic failover, and retry logic
+ * Wraps Gemini API calls with round-robin load balancing, automatic failover, retry logic, and circuit breaker protection
  */
 export async function callWithGemini(operation, timeoutMs = 3000, maxRetries) {
   const apiKeys = getApiKeys();
   if (apiKeys.length === 0) {
     throw new Error('No Gemini API keys configured.');
   }
+
+  // Circuit Breaker State Check
+  if (circuitState === 'OPEN') {
+    if (Date.now() - lastStateChangeTime > COOLDOWN_MS) {
+      circuitState = 'HALF-OPEN';
+      console.log(`[CIRCUIT BREAKER] Cooldown expired. Entering HALF-OPEN state.`);
+    } else {
+      console.warn(`[CIRCUIT BREAKER] Breaker is OPEN. Bypassing Gemini API call. Cooldown remaining: ${Math.max(0, COOLDOWN_MS - (Date.now() - lastStateChangeTime))}ms`);
+      geminiMetrics.fallbackCount++;
+      throw new Error('Circuit breaker is OPEN. Gemini calls bypassed.');
+    }
+  }
+
+  geminiMetrics.requestCount++;
 
   // If maxRetries is not explicitly provided:
   // - If only 1 key is configured, retry 1 time (total 2 attempts) to handle transient errors
@@ -178,18 +221,27 @@ export async function callWithGemini(operation, timeoutMs = 3000, maxRetries) {
       ? apiKey.substring(0, 6) + '...' + apiKey.substring(apiKey.length - 4)
       : 'short_key';
 
-    let lastError = null;
     let delay = 150; // Starting backoff delay in ms
 
     for (let attempt = 0; attempt <= retriesPerKey; attempt++) {
       const startTime = Date.now();
       try {
-        console.log(`[GEMINI] Using key index ${idx} (Key: ${maskedKey}) - Attempt ${attempt + 1}/${retriesPerKey + 1}`);
+        console.log(`[GEMINI] Using key index ${idx} (Key: ${maskedKey}) - Attempt ${attempt + 1}/${retriesPerKey + 1} - State: ${circuitState}`);
         const genAI = new GoogleGenerativeAI(apiKey);
         const result = await withTimeout(operation(genAI), timeoutMs);
         
         const duration = Date.now() - startTime;
-        console.log(`[GEMINI SUCCESS] Key index ${idx} succeeded in ${duration}ms`);
+        console.log(`[GEMINI SUCCESS] Key index ${idx} succeeded in ${duration}ms (State: ${circuitState})`);
+        
+        // Metrics & Circuit Breaker Reset
+        geminiMetrics.successCount++;
+        geminiMetrics.totalDurationMs += duration;
+        
+        if (circuitState === 'HALF-OPEN') {
+          circuitState = 'CLOSED';
+          console.log(`[CIRCUIT BREAKER] Service recovered. Resetting to CLOSED state.`);
+        }
+        consecutiveFailures = 0;
         
         // Success: save the current successful key index to start next time
         currentKeyIndex = idx;
@@ -197,9 +249,17 @@ export async function callWithGemini(operation, timeoutMs = 3000, maxRetries) {
       } catch (error) {
         const duration = Date.now() - startTime;
         const isTimeout = error.message.includes('Timeout');
-        console.error(`[GEMINI ERROR] Key index ${idx} attempt ${attempt + 1} failed in ${duration}ms: ${error.message} (Timeout: ${isTimeout})`);
+        const is503 = error.message.includes('503');
         
-        lastError = error;
+        if (isTimeout) {
+          geminiMetrics.timeoutCount++;
+        } else if (is503) {
+          geminiMetrics.error503Count++;
+        } else {
+          geminiMetrics.otherErrorCount++;
+        }
+        
+        console.error(`[GEMINI ERROR] Key index ${idx} attempt ${attempt + 1} failed in ${duration}ms: ${error.message} (Timeout: ${isTimeout}, 503: ${is503})`);
         
         // If it's the last attempt for this key, don't wait
         if (attempt < retriesPerKey) {
@@ -208,6 +268,15 @@ export async function callWithGemini(operation, timeoutMs = 3000, maxRetries) {
         }
       }
     }
+  }
+
+  // All keys and attempts failed
+  consecutiveFailures++;
+  geminiMetrics.fallbackCount++;
+  if (circuitState === 'HALF-OPEN' || consecutiveFailures >= FAILURE_THRESHOLD) {
+    circuitState = 'OPEN';
+    lastStateChangeTime = Date.now();
+    console.error(`[CIRCUIT BREAKER] Tripped to OPEN state due to ${consecutiveFailures} consecutive failures.`);
   }
 
   throw new Error('All configured Gemini API keys failed.');
@@ -542,7 +611,7 @@ Return ONLY a JSON object matching this schema (no markdown wrapping, no backtic
         matchedCustomer,
         isAiFallback: false
       };
-    }, 4000);
+    }, 5000);
   } catch (error) {
     console.error('Gemini voice processing failed, using fallback:', error);
     return localParseVoice(transcript, customers);
@@ -627,7 +696,7 @@ Create a summary that matches this persona:
 
       const result = await model.generateContent(prompt);
       return result.response.text().trim();
-    }, 6000);
+    }, 8000);
   } catch (error) {
     console.error('Gemini daily summary generation failed, using local engine output:', error);
     return defaultText;
@@ -689,7 +758,7 @@ Return ONLY a JSON response in the following schema:
       }
       
       return null;
-    }, 2000);
+    }, 3000);
   } catch (error) {
     console.error('Gemini semantic lookup failed:', error);
     return null;
@@ -741,7 +810,7 @@ Return ONLY a JSON response in the following schema (no markdown, no backticks):
       const responseText = result.response.text();
       const parsed = JSON.parse(responseText.trim());
       return parsed.canonicalName;
-    }, 2000);
+    }, 3000);
   } catch (error) {
     console.error('Failed to generate canonical name with Gemini:', error);
     const transliterated = await importTransliterateHindi(name);

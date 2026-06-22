@@ -1,14 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { fetchCustomers, fetchReminders, fetchTransactions, createCustomer, deleteCustomer, updateCustomer, fetchLedger, registerMerchant } from './utils/api';
 import { Customer, Reminder, Transaction } from './types';
-import Dashboard from './components/Dashboard';
-import Customers from './components/Customers';
-import CustomerLedger from './components/CustomerLedger';
-import VoiceRecorder from './components/VoiceRecorder';
-import Summaries from './components/Summaries';
-import Reminders from './components/Reminders';
+import Dashboard from './components/Dashboard'; // Static load for instant first-paint
 import DatePicker from './components/DatePicker';
 import { LayoutDashboard, BookOpen, Mic, BellRing, Sparkles, Settings, LogOut, Store, CreditCard, Key, Smartphone, MapPin, RefreshCw, AlertTriangle, Menu, X } from 'lucide-react';
+
+// Lazy loaded page components
+const Customers = lazy(() => import('./components/Customers'));
+const CustomerLedger = lazy(() => import('./components/CustomerLedger'));
+const VoiceRecorder = lazy(() => import('./components/VoiceRecorder'));
+const Summaries = lazy(() => import('./components/Summaries'));
+const Reminders = lazy(() => import('./components/Reminders'));
+
+const PageLoader = () => (
+  <div className="flex flex-col items-center justify-center min-h-[40vh] space-y-4">
+    <div className="relative">
+      <div className="w-10 h-10 border-4 border-brand-green border-t-transparent rounded-full animate-spin"></div>
+      <Sparkles size={16} className="absolute inset-0 m-auto text-brand-green animate-pulse" />
+    </div>
+    <p className="text-brand-gray-500 font-bold text-xs uppercase tracking-wider">Loading page content...</p>
+  </div>
+);
 
 const getTodayStr = () => {
   const localDate = new Date();
@@ -665,65 +677,67 @@ export default function App() {
               />
             )}
 
-            {activePage === 'customers' && (
-              selectedCustomerId ? (
-                <CustomerLedger 
-                  customerId={selectedCustomerId} 
-                  onBack={() => setSelectedCustomerId(null)}
-                  onBalanceChange={loadData}
-                  onUpdateCustomer={async (id, data) => {
-                    await updateCustomer(id, data);
-                    await loadData();
-                  }}
-                  selectedDate={selectedDate}
-                />
-              ) : (
-                <Customers 
+            <Suspense fallback={<PageLoader />}>
+              {activePage === 'customers' && (
+                selectedCustomerId ? (
+                  <CustomerLedger 
+                    customerId={selectedCustomerId} 
+                    onBack={() => setSelectedCustomerId(null)}
+                    onBalanceChange={loadData}
+                    onUpdateCustomer={async (id, data) => {
+                      await updateCustomer(id, data);
+                      await loadData();
+                    }}
+                    selectedDate={selectedDate}
+                  />
+                ) : (
+                  <Customers 
+                    customers={customers}
+                    onAddCustomer={async (newC) => {
+                      const result = await createCustomer(newC.name, newC.phone, newC.alias);
+                      if (result.status === 'multiple_matches') {
+                        alert(`A customer with a similar name already exists: ${result.candidates.map((c: any) => c.name).join(', ')}. Please use a unique name.`);
+                        throw new Error('Duplicate customer exists');
+                      }
+                      await loadData();
+                      if (result.was_existing) {
+                        alert(`Customer "${result.name}" already exists. Opening their ledger.`);
+                        handleNavigate('customers', { openLedgerId: result.id });
+                      }
+                    }}
+                    onSelectCustomer={(id) => setSelectedCustomerId(id)}
+                    onDeleteCustomer={async (id) => {
+                      await deleteCustomer(id);
+                      await loadData();
+                    }}
+                    onUpdateCustomer={async (id, data) => {
+                      await updateCustomer(id, data);
+                      await loadData();
+                    }}
+                  />
+                )
+              )}
+
+              {activePage === 'voice-recorder' && (
+                <VoiceRecorder 
                   customers={customers}
-                  onAddCustomer={async (newC) => {
-                    const result = await createCustomer(newC.name, newC.phone, newC.alias);
-                    if (result.status === 'multiple_matches') {
-                      alert(`A customer with a similar name already exists: ${result.candidates.map((c: any) => c.name).join(', ')}. Please use a unique name.`);
-                      throw new Error('Duplicate customer exists');
-                    }
-                    await loadData();
-                    if (result.was_existing) {
-                      alert(`Customer "${result.name}" already exists. Opening their ledger.`);
-                      handleNavigate('customers', { openLedgerId: result.id });
-                    }
-                  }}
-                  onSelectCustomer={(id) => setSelectedCustomerId(id)}
-                  onDeleteCustomer={async (id) => {
-                    await deleteCustomer(id);
-                    await loadData();
-                  }}
-                  onUpdateCustomer={async (id, data) => {
-                    await updateCustomer(id, data);
-                    await loadData();
-                  }}
+                  onTransactionSaved={loadData}
+                  onNavigate={handleNavigate}
                 />
-              )
-            )}
+              )}
 
-            {activePage === 'voice-recorder' && (
-              <VoiceRecorder 
-                customers={customers}
-                onTransactionSaved={loadData}
-                onNavigate={handleNavigate}
-              />
-            )}
+              {activePage === 'reminders' && (
+                <Reminders 
+                  reminders={reminders} 
+                  onNavigate={handleNavigate} 
+                  shopName={shopName}
+                />
+              )}
 
-            {activePage === 'reminders' && (
-              <Reminders 
-                reminders={reminders} 
-                onNavigate={handleNavigate} 
-                shopName={shopName}
-              />
-            )}
-
-            {activePage === 'summaries' && (
-              <Summaries selectedDate={selectedDate} />
-            )}
+              {activePage === 'summaries' && (
+                <Summaries selectedDate={selectedDate} />
+              )}
+            </Suspense>
 
             {activePage === 'settings' && (
               <div className="space-y-6 max-w-2xl">

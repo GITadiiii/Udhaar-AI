@@ -2691,3 +2691,131 @@ export async function addMerchant(merchant) {
   writeDb(db);
   return { status: 'success', id };
 }
+
+/**
+ * Updates a customer's display name and aliases in the background
+ */
+export async function updateCustomerNameInDb(id, newName, merchantId) {
+  const db = readDb();
+  const customer = db.customers.find(c => c.id === id);
+  if (!customer) return false;
+  
+  const oldName = customer.name;
+  const sanitizedName = sanitizeCustomerName(newName);
+  
+  customer.name = sanitizedName;
+  customer.displayName = sanitizedName;
+  customer.normalizedName = getNormalizedNameIdentifier(sanitizedName);
+  
+  if (!customer.aliases) {
+    customer.aliases = [];
+  }
+  if (!customer.aliases.includes(oldName)) {
+    customer.aliases.push(oldName);
+  }
+  if (!customer.aliases.includes(sanitizedName)) {
+    customer.aliases.push(sanitizedName);
+  }
+  
+  writeDb(db);
+  console.log(`[BACKGROUND] Updated customer name from "${oldName}" to "${sanitizedName}" (ID: ${id})`);
+  return true;
+}
+
+/**
+ * Consolidates a newly created duplicate customer ID into an existing master ID
+ */
+export async function mergeSpecificCustomers(masterId, duplicateId, merchantId) {
+  const db = readDb();
+  const targetMerchantId = merchantId || 'merchant_1';
+  
+  const master = db.customers.find(c => c.id === masterId && !c.deleted);
+  const duplicate = db.customers.find(c => c.id === duplicateId && !c.deleted);
+  
+  if (!master || !duplicate) {
+    console.warn(`[MERGE SPECIFIC] Master (${masterId}) or Duplicate (${duplicateId}) not found or deleted.`);
+    return false;
+  }
+  
+  console.log(`[MERGE SPECIFIC] Consolidating duplicate profile "${duplicate.name}" (ID: ${duplicate.id}) into master "${master.name}" (ID: ${master.id})`);
+  
+  // Merge aliases
+  const masterAliases = new Set(master.aliases || []);
+  masterAliases.add(master.name);
+  if (master.alias) masterAliases.add(master.alias);
+  
+  if (duplicate.aliases) {
+    duplicate.aliases.forEach(a => masterAliases.add(a));
+  }
+  masterAliases.add(duplicate.name);
+  if (duplicate.alias) masterAliases.add(duplicate.alias);
+  
+  master.aliases = Array.from(masterAliases).filter(a => a.toLowerCase() !== master.name.toLowerCase());
+  
+  // Set duplicate to deleted
+  duplicate.deleted = true;
+  
+  // Remap transactions
+  db.transactions = (db.transactions || []).map(tx => {
+    if (tx.customer_id === duplicate.id && (tx.merchant_id || 'merchant_1') === targetMerchantId) {
+      console.log(`[MERGE SPECIFIC] Remapped transaction ${tx.id} from duplicate customer ID ${tx.customer_id} to master ID ${master.id}`);
+      return { ...tx, customer_id: master.id };
+    }
+    return tx;
+  });
+  
+  // Remap reminders
+  db.reminders = (db.reminders || []).map(rem => {
+    if (rem.customer_id === duplicate.id && (rem.merchant_id || 'merchant_1') === targetMerchantId) {
+      console.log(`[MERGE SPECIFIC] Remapped reminder ${rem.id} from duplicate customer ID ${rem.customer_id} to master ID ${master.id}`);
+      return { ...rem, customer_id: master.id };
+    }
+    return rem;
+  });
+  
+  // Recalculate outstanding balances for master
+  const masterTxs = db.transactions.filter(tx => tx.customer_id === master.id && (tx.merchant_id || 'merchant_1') === targetMerchantId);
+  const balance = masterTxs.reduce((sum, tx) => {
+    if (tx.type === 'credit') return sum + tx.amount;
+    return Math.max(0, sum - tx.amount);
+  }, 0);
+  
+  // Remove duplicate outstanding balance entry
+  db.outstanding_balances = (db.outstanding_balances || []).filter(b => b.customer_id !== duplicate.id);
+  
+  // Update master outstanding balance entry
+  let masterBalanceEntry = db.outstanding_balances.find(b => b.customer_id === master.id);
+  const lastUpdatedDate = masterTxs.length > 0
+    ? [...masterTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0].date
+    : master.created_at;
+    
+  if (masterBalanceEntry) {
+    masterBalanceEntry.balance = balance;
+    masterBalanceEntry.last_updated = lastUpdatedDate;
+  } else {
+    db.outstanding_balances.push({
+      customer_id: master.id,
+      merchant_id: targetMerchantId,
+      balance,
+      last_updated: lastUpdatedDate
+    });
+  }
+  
+  // Update master reminders pending status/amount
+  db.reminders = db.reminders.map(rem => {
+    if (rem.customer_id === master.id && rem.status === 'pending' && (rem.merchant_id || 'merchant_1') === targetMerchantId) {
+      if (balance === 0) {
+        return { ...rem, status: 'paid', amount: 0 };
+      }
+      return { ...rem, amount: balance };
+    }
+    return rem;
+  });
+  
+  invalidateMerchantSummaries(db, targetMerchantId);
+  writeDb(db);
+  
+  console.log(`[MERGE SPECIFIC] Consolidation complete for merchant ${targetMerchantId}.`);
+  return true;
+}
+

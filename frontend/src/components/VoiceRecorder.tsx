@@ -77,6 +77,10 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
   
   // Smart Customer Resolution Candidates
   const [candidates, setCandidates] = useState<Customer[]>([]);
+
+  // Visual Saving UX State
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveProgress, setSaveProgress] = useState<'creating_customer' | 'recording_transaction' | 'success' | ''>('');
   
   const isSpellingSuggestion = candidates.length > 0 && candidates.some(c => {
     const cName = c.name.toLowerCase().trim();
@@ -322,21 +326,26 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
     }
 
     try {
+      setIsSaving(true);
       let customerId = matchedCustomer ? matchedCustomer.id : '';
 
       // If customer doesn't exist, create customer ledger first with uniqueness safety
       if (!customerId) {
+        setSaveProgress('creating_customer');
         const result = await createCustomer(cleanName, '', undefined, explicitConfirmNew);
         
         if (result.status === 'multiple_matches' && result.candidates) {
           setCandidates(result.candidates);
           setRecorderState('multiple_matches');
+          setIsSaving(false);
+          setSaveProgress('');
           return; // Stop and let merchant resolve duplicate candidates
         }
         
         customerId = result.id;
       }
 
+      setSaveProgress('recording_transaction');
       // Record transaction
       await createTransaction({
         customerId,
@@ -346,12 +355,16 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
         aliasSpoken: cleanName
       });
 
+      setSaveProgress('success');
       // Show confetti on success
       confetti({
         particleCount: 150,
         spread: 80,
         origin: { y: 0.6 }
       });
+
+      // 1s delay on success state so the user visually registers the success checkmark
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
       onTransactionSaved();
       
@@ -361,6 +374,9 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
     } catch (err) {
       console.error(err);
       alert('Error saving transaction. Please try again.');
+    } finally {
+      setIsSaving(false);
+      setSaveProgress('');
     }
   };
 
@@ -565,6 +581,7 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
                   id="extracted-name-input"
                   type="text"
                   value={extractedName}
+                  disabled={isSaving}
                   onChange={(e) => {
                     setExtractedName(e.target.value);
                     setExplicitConfirmNew(false);
@@ -572,7 +589,7 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
                   onBlur={() => {
                     setExtractedName(sanitizeCustomerName(extractedName));
                   }}
-                  className="w-full bg-brand-card px-4 py-3 rounded-xl border border-brand-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent text-brand-dark font-semibold text-sm"
+                  className={`w-full bg-brand-card px-4 py-3 rounded-xl border border-brand-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent text-brand-dark font-semibold text-sm ${isSaving ? 'opacity-70 bg-brand-gray-100 cursor-not-allowed' : ''}`}
                 />
                 <div className="mt-1.5 flex items-center gap-1.5 text-xs font-medium">
                   {matchedCustomer ? (
@@ -595,8 +612,9 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
                     id="extracted-amount-input"
                     type="number"
                     value={extractedAmount || ''}
+                    disabled={isSaving}
                     onChange={(e) => setExtractedAmount(parseFloat(e.target.value) || 0)}
-                    className="w-full bg-brand-card px-4 py-3 rounded-xl border border-brand-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent text-brand-dark font-bold text-sm"
+                    className={`w-full bg-brand-card px-4 py-3 rounded-xl border border-brand-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent text-brand-dark font-bold text-sm ${isSaving ? 'opacity-70 bg-brand-gray-100 cursor-not-allowed' : ''}`}
                   />
                 </div>
                 <div>
@@ -604,8 +622,9 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
                   <select
                     id="extracted-type-select"
                     value={extractedType}
+                    disabled={isSaving}
                     onChange={(e: any) => setExtractedType(e.target.value)}
-                    className="w-full bg-brand-card px-4 py-3 rounded-xl border border-brand-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent text-brand-dark font-semibold text-sm cursor-pointer"
+                    className={`w-full bg-brand-card px-4 py-3 rounded-xl border border-brand-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent text-brand-dark font-semibold text-sm cursor-pointer ${isSaving ? 'opacity-70 bg-brand-gray-100 cursor-not-allowed' : ''}`}
                   >
                     <option value="unknown" disabled>Select Transaction Type...</option>
                     <option value="credit">Give Credit (Udhaar)</option>
@@ -626,16 +645,33 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
             <div className="flex gap-4">
               <button
                 onClick={handleDiscard}
-                className="flex-1 border border-brand-gray-200 hover:bg-brand-gray-50 text-brand-gray-700 font-semibold py-3 rounded-xl transition-colors text-sm"
+                disabled={isSaving}
+                className={`flex-1 border border-brand-gray-200 hover:bg-brand-gray-50 text-brand-gray-700 font-semibold py-3 rounded-xl transition-colors text-sm ${isSaving ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 Discard / Try Again
               </button>
               <button
                 id="confirm-voice-save-btn"
                 onClick={handleConfirmSave}
-                className="flex-1 bg-brand-green hover:bg-green-700 text-white font-bold py-3 rounded-xl shadow-soft hover:shadow-premium transition-all text-sm"
+                disabled={isSaving}
+                className={`flex-1 bg-brand-green hover:bg-green-700 text-white font-bold py-3 rounded-xl shadow-soft hover:shadow-premium transition-all text-sm flex items-center justify-center gap-2 ${isSaving ? 'opacity-75 cursor-not-allowed' : ''}`}
               >
-                Confirm & Save Entry
+                {isSaving ? (
+                  <>
+                    {saveProgress === 'success' ? (
+                      <CheckCircle size={16} className="text-white shrink-0" />
+                    ) : (
+                      <RefreshCw size={16} className="animate-spin shrink-0" />
+                    )}
+                    <span>
+                      {saveProgress === 'creating_customer' && 'Creating Customer...'}
+                      {saveProgress === 'recording_transaction' && 'Recording Transaction...'}
+                      {saveProgress === 'success' && 'Success!'}
+                    </span>
+                  </>
+                ) : (
+                  <span>Confirm & Save Entry</span>
+                )}
               </button>
             </div>
           </div>
