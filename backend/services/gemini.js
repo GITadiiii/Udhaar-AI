@@ -35,6 +35,74 @@ let lastStateChangeTime = Date.now();
 const FAILURE_THRESHOLD = 3;
 const COOLDOWN_MS = 30000; // 30 seconds
 
+let geminiDisabledUntil = 0;
+let quotaLogPrintedThisCooldown = false;
+
+export function isGeminiActive() {
+  const now = Date.now();
+  if (now < geminiDisabledUntil) {
+    const remaining = Math.max(0, geminiDisabledUntil - now);
+    if (!quotaLogPrintedThisCooldown) {
+      console.warn(`[GEMINI] Provider temporarily disabled. Reason: Quota Exhausted. Retry After: ${Math.ceil(remaining / 1000)}s. Fallback Engine Active.`);
+      quotaLogPrintedThisCooldown = true;
+    }
+    return false;
+  }
+  
+  if (quotaLogPrintedThisCooldown) {
+    quotaLogPrintedThisCooldown = false;
+  }
+
+  if (circuitState === 'OPEN') {
+    if (now - lastStateChangeTime > COOLDOWN_MS) {
+      circuitState = 'HALF-OPEN';
+      consecutiveFailures = 0;
+      console.log(`[CIRCUIT BREAKER] Cooldown expired. Entering HALF-OPEN state.`);
+      return true;
+    }
+    return false;
+  }
+
+  return true;
+}
+
+function isQuotaError(error) {
+  if (!error) return false;
+  const msg = (error.message || '').toLowerCase();
+  const status = error.status || error.statusCode;
+  return status === 429 || 
+         msg.includes('429') || 
+         msg.includes('resource_exhausted') || 
+         msg.includes('resourceexhausted') || 
+         msg.includes('quota exceeded') || 
+         msg.includes('quota_exceeded') ||
+         msg.includes('rate limit') ||
+         msg.includes('ratelimit');
+}
+
+function parseRetryDelay(error) {
+  if (!error) return 60000;
+  const msg = error.message || '';
+  
+  const secMatch = /retry\s*after\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*s/i.exec(msg);
+  if (secMatch) {
+    return Math.ceil(parseFloat(secMatch[1]) * 1000);
+  }
+  
+  const secWordMatch = /retry\s*after\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*seconds/i.exec(msg);
+  if (secWordMatch) {
+    return Math.ceil(parseFloat(secWordMatch[1]) * 1000);
+  }
+
+  const tryInMatch = /try\s+again\s+in\s+(\d+(?:\.\d+)?)\s*s/i.exec(msg);
+  if (tryInMatch) {
+    return Math.ceil(parseFloat(tryInMatch[1]) * 1000);
+  }
+  
+  return 60000;
+}
+
+
 // Performance Metrics
 export const geminiMetrics = {
   requestCount: 0,
@@ -191,14 +259,13 @@ export async function callWithGemini(operation, timeoutMs = 3000, maxRetries) {
     throw new Error('No Gemini API keys configured.');
   }
 
-  // Circuit Breaker State Check
-  if (circuitState === 'OPEN') {
-    if (Date.now() - lastStateChangeTime > COOLDOWN_MS) {
-      circuitState = 'HALF-OPEN';
-      console.log(`[CIRCUIT BREAKER] Cooldown expired. Entering HALF-OPEN state.`);
+  // Quota & Circuit Breaker pre-checks using isGeminiActive()
+  if (!isGeminiActive()) {
+    geminiMetrics.fallbackCount++;
+    const remaining = Math.max(0, geminiDisabledUntil - Date.now());
+    if (remaining > 0) {
+      throw new Error(`Gemini temporarily disabled due to quota exhaustion. Retry after ${Math.ceil(remaining / 1000)}s.`);
     } else {
-      console.warn(`[CIRCUIT BREAKER] Breaker is OPEN. Bypassing Gemini API call. Cooldown remaining: ${Math.max(0, COOLDOWN_MS - (Date.now() - lastStateChangeTime))}ms`);
-      geminiMetrics.fallbackCount++;
       throw new Error('Circuit breaker is OPEN. Gemini calls bypassed.');
     }
   }
@@ -209,6 +276,8 @@ export async function callWithGemini(operation, timeoutMs = 3000, maxRetries) {
   // - If only 1 key is configured, retry 1 time (total 2 attempts) to handle transient errors
   // - If multiple keys are configured, failover immediately to the next key (0 retries per key, total attempts = number of keys)
   const retriesPerKey = maxRetries !== undefined ? maxRetries : 1;
+  let lastError = null;
+  let wasQuota = false;
 
   for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
     // Ensure index is in bounds
@@ -247,7 +316,20 @@ export async function callWithGemini(operation, timeoutMs = 3000, maxRetries) {
         currentKeyIndex = idx;
         return result;
       } catch (error) {
+        lastError = error;
         const duration = Date.now() - startTime;
+        
+        if (isQuotaError(error)) {
+          wasQuota = true;
+          const retryDelayMs = parseRetryDelay(error);
+          geminiDisabledUntil = Date.now() + retryDelayMs;
+          quotaLogPrintedThisCooldown = false;
+          console.warn(`[GEMINI] Provider temporarily disabled. Reason: Quota Exhausted. Retry After: ${Math.ceil(retryDelayMs / 1000)}s. Fallback Engine Active.`);
+          
+          // Throw immediately to skip retries/other keys
+          throw error;
+        }
+
         const isTimeout = error.message.includes('Timeout');
         const is503 = error.message.includes('503');
         
@@ -259,6 +341,7 @@ export async function callWithGemini(operation, timeoutMs = 3000, maxRetries) {
           geminiMetrics.otherErrorCount++;
         }
         
+        // Clean single line log to reduce spam
         console.error(`[GEMINI ERROR] Key index ${idx} attempt ${attempt + 1} failed in ${duration}ms: ${error.message} (Timeout: ${isTimeout}, 503: ${is503})`);
         
         // If it's the last attempt for this key, don't wait
@@ -271,15 +354,21 @@ export async function callWithGemini(operation, timeoutMs = 3000, maxRetries) {
   }
 
   // All keys and attempts failed
-  consecutiveFailures++;
   geminiMetrics.fallbackCount++;
+  
+  if (wasQuota) {
+    throw new Error(`Gemini API quota exhausted. Last error: ${lastError ? lastError.message : 'Unknown'}`);
+  }
+
+  // Only increment system consecutive failures for timeouts/503s
+  consecutiveFailures++;
   if (circuitState === 'HALF-OPEN' || consecutiveFailures >= FAILURE_THRESHOLD) {
     circuitState = 'OPEN';
     lastStateChangeTime = Date.now();
-    console.error(`[CIRCUIT BREAKER] Tripped to OPEN state due to ${consecutiveFailures} consecutive failures.`);
+    console.error(`[CIRCUIT BREAKER] Tripped to OPEN state due to ${consecutiveFailures} consecutive system failures.`);
   }
 
-  throw new Error('All configured Gemini API keys failed.');
+  throw new Error(`All configured Gemini API keys failed. Last error: ${lastError ? lastError.message : 'Unknown'}`);
 }
 
 /**
@@ -525,6 +614,10 @@ async function localParseVoice(transcript, customers) {
  * Extract transaction structure from voice transcript using Gemini
  */
 export async function extractTransactionFromVoice(transcript, customers) {
+  if (!isGeminiActive()) {
+    return localParseVoice(transcript, customers);
+  }
+
   const apiKeys = getApiKeys();
   if (apiKeys.length === 0) {
     return localParseVoice(transcript, customers);
@@ -656,6 +749,10 @@ There are ${activeDebtCustomers.length} customer(s) with outstanding dues.
 Highest outstanding debtor is ${topDebtorText}.
 Suggested action: Review pending reminders and send payment follow-ups today.`;
 
+  if (!isGeminiActive()) {
+    return defaultText;
+  }
+
   const apiKeys = getApiKeys();
   if (apiKeys.length === 0) {
     return defaultText;
@@ -721,6 +818,10 @@ export async function resolveSemanticMatch(queryName, customers) {
   if (cached && Date.now() - cached.timestamp < SEMANTIC_CACHE_TTL_MS) {
     console.log(`[SEMANTIC CACHE HIT] resolveSemanticMatch: "${queryName}" -> "${cached.matchedCustomerId}"`);
     return cached.matchedCustomerId;
+  }
+
+  if (!isGeminiActive()) {
+    return null;
   }
 
   const apiKeys = getApiKeys();
@@ -796,6 +897,13 @@ export async function getCanonicalName(name, customers) {
   if (cached && Date.now() - cached.timestamp < CANONICAL_CACHE_TTL_MS) {
     console.log(`[CANONICAL CACHE HIT] getCanonicalName: "${name}" -> "${cached.canonicalName}"`);
     return cached.canonicalName;
+  }
+
+  if (!isGeminiActive()) {
+    const transliterated = await importTransliterateHindi(name);
+    const canonical = toTitleCase(transliterated);
+    canonicalNameCache.set(cleanInput, { canonicalName: canonical, timestamp: Date.now() });
+    return canonical;
   }
 
   const apiKeys = getApiKeys();
