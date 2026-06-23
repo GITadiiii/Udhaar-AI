@@ -177,6 +177,27 @@ app.get('/api/customers', validateMerchant, async (req, res) => {
   }
 });
 
+// Get Single Customer details (including calculated outstanding balance)
+app.get('/api/customers/:id', validateMerchant, async (req, res) => {
+  const startTime = Date.now();
+  const merchantId = getMerchantId(req);
+  const { id } = req.params;
+  console.log(`[CUSTOMER GET START] ID: ${id}, Merchant: ${merchantId}`);
+  try {
+    const customers = await getCustomers(merchantId);
+    const customer = customers.find(c => c.id === id);
+    if (!customer) {
+      console.log(`[CUSTOMER GET NOT FOUND] ID: ${id} not found in ${Date.now() - startTime}ms`);
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+    console.log(`[CUSTOMER GET SUCCESS] ID: ${id} in ${Date.now() - startTime}ms`);
+    res.json(customer);
+  } catch (error) {
+    console.error(`[CUSTOMER GET FAILURE] ID: ${id} Error: ${error.message} in ${Date.now() - startTime}ms`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get All Transactions for Merchant
 app.get('/api/transactions', validateMerchant, async (req, res) => {
   const startTime = Date.now();

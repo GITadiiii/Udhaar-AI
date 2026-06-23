@@ -1029,6 +1029,21 @@ try {
   
   console.log('✅ [PASS] Unified Customer balance checks passed (Credit 8000, Collection 7000, Net 1000, Delete Recalculation)');
 
+  // 22.5 Verify Advance Account (Credit = ₹1,000, Collection = ₹2,000, balance = -₹1,000)
+  const cAdvance = addCustomer({ name: 'Advance Customer', phone: '+919800077777', merchantId: m1Test });
+  addTransaction({ customerId: cAdvance.id, amount: 1000, type: 'credit', description: 'Credit entry', merchantId: m1Test });
+  addTransaction({ customerId: cAdvance.id, amount: 2000, type: 'collection', description: 'Collection entry', merchantId: m1Test });
+
+  const customersListAdvance = getCustomers(m1Test);
+  const custInListAdvance = customersListAdvance.find(c => c.id === cAdvance.id);
+  assert(custInListAdvance, 'Advance Customer must exist in customer list');
+  assert(custInListAdvance.balance === -1000, `List card outstanding balance must be -1000 for advance customer (got: ${custInListAdvance.balance})`);
+
+  const ledgerDataAdvance = getCustomerLedger(cAdvance.id, m1Test);
+  assert(ledgerDataAdvance.customer.balance === -1000, `Ledger detail outstanding balance must be -1000 for advance customer (got: ${ledgerDataAdvance.customer.balance})`);
+  
+  console.log('✅ [PASS] Advance Customer checks passed (Credit 1000, Collection 2000, Net -1000)');
+
   // Restore keys
   if (savedKeys) process.env.GEMINI_API_KEYS = savedKeys;
   if (savedKey) process.env.GEMINI_API_KEY = savedKey;

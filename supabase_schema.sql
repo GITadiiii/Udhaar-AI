@@ -54,13 +54,54 @@ CREATE TABLE IF NOT EXISTS outstanding_balances (
 
 CREATE INDEX IF NOT EXISTS idx_balances_merchant ON outstanding_balances (merchant_id);
 
--- 5. Automated Database Trigger to update outstanding balance upon transaction insert
-CREATE OR REPLACE FUNCTION update_outstanding_balance()
+-- 5. Automated Database Trigger to update outstanding balance upon transaction modification
+CREATE OR REPLACE FUNCTION update_outstanding_balance_trigger_fn()
 RETURNS TRIGGER AS $$
 DECLARE
-    target_merchant_id UUID;
+    v_customer_id UUID;
+    v_merchant_id UUID;
+    v_total_credit NUMERIC(12,2) := 0;
+    v_total_collection NUMERIC(12,2) := 0;
+    v_balance NUMERIC(12,2) := 0;
+    v_last_updated TIMESTAMP WITH TIME ZONE;
+BEGIN
+    -- Determine customer_id and merchant_id based on operation
+    IF TG_OP = 'DELETE' THEN
+        v_customer_id := OLD.customer_id;
+        v_merchant_id := OLD.merchant_id;
+    ELSE
+        v_customer_id := NEW.customer_id;
+        v_merchant_id := NEW.merchant_id;
+    END IF;
+
+    -- Calculate sums from transaction history
+    SELECT 
+        COALESCE(SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END), 0),
+        COALESCE(SUM(CASE WHEN type = 'collection' THEN amount ELSE 0 END), 0),
+        COALESCE(MAX(date), NOW())
+    INTO v_total_credit, v_total_collection, v_last_updated
+    FROM transactions
+    WHERE customer_id = v_customer_id;
+
+    v_balance := v_total_credit - v_total_collection;
+
+    -- Upsert into outstanding_balances
+    INSERT INTO outstanding_balances (customer_id, merchant_id, balance, last_updated)
+    VALUES (v_customer_id, v_merchant_id, v_balance, v_last_updated)
+    ON CONFLICT (customer_id) 
+    DO UPDATE SET 
+        balance = EXCLUDED.balance,
+        last_updated = EXCLUDED.last_updated;
+
+    RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_update_outstanding_balance ON transactions;
+CREATE TRIGGER trg_update_outstanding_balance
+AFTER INSERT OR UPDATE OR DELETE ON transactions
+FOR EACH ROW
+EXECUTE FUNCTION update_outstanding_balance_trigger_fn();
 
 -- 6. Reminders Table (Auto-generated payment schedules)
 CREATE TABLE IF NOT EXISTS reminders (

@@ -213,6 +213,15 @@ export async function fetchCustomers(date?: string, forceRefresh = false): Promi
   return data;
 }
 
+export async function fetchCustomer(id: string): Promise<Customer> {
+  const url = `${API_BASE}/customers/${id}`;
+  const res = await fetchWithTimeout(url, {
+    headers: getHeaders()
+  });
+  await checkResponse(res, 'Failed to fetch customer profile');
+  return res.json();
+}
+
 export async function fetchTransactions(date?: string, forceRefresh = false): Promise<Transaction[]> {
   const cacheKey = date ? date.slice(0, 10) : 'all';
   if (transactionsCache[cacheKey] && !forceRefresh) {

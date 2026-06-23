@@ -76,6 +76,32 @@ export function invalidateQueryCache(prefix) {
 }
 
 // ----------------------------------------------------
+// Unified Balance Calculation & Debug Logging Helpers
+// ----------------------------------------------------
+
+export function calculateBalanceFromTransactions(txs) {
+  let totalCredit = 0;
+  let totalCollections = 0;
+  for (const t of txs || []) {
+    const amt = parseFloat(t.amount) || 0;
+    if (t.type === 'credit') {
+      totalCredit += amt;
+    } else {
+      totalCollections += amt;
+    }
+  }
+  return {
+    totalCredit,
+    totalCollections,
+    balance: totalCredit - totalCollections
+  };
+}
+
+export function logBalanceCalculation(customerId, totalCredit, totalCollection, calculatedOutstanding, storedOutstanding, displayedOutstanding) {
+  console.log(`[BALANCE DEBUG] Customer ID: ${customerId} | Total Credit: ₹${totalCredit} | Total Collection: ₹${totalCollection} | Calculated Outstanding: ₹${calculatedOutstanding} | Stored Outstanding: ₹${storedOutstanding} | Displayed Outstanding: ₹${displayedOutstanding}`);
+}
+
+// ----------------------------------------------------
 // Core Helper & Search Functions for Customer Uniqueness
 // ----------------------------------------------------
 
@@ -767,12 +793,12 @@ function mergeDuplicateCustomersForMerchant(merchantId) {
     
     customers.filter(c => !mergedCustomerIds.has(c.id)).forEach(c => {
       const customerTxs = currentDb.transactions.filter(tx => tx.customer_id === c.id && (tx.merchant_id || 'merchant_1') === targetMerchantId);
-      const balance = customerTxs.reduce((sum, tx) => {
-        if (tx.type === 'credit') return sum + tx.amount;
-        return Math.max(0, sum - tx.amount);
-      }, 0);
+      const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(customerTxs);
 
       let bEntry = newBalances.find(b => b.customer_id === c.id);
+      const storedOutstanding = bEntry ? bEntry.balance : 0;
+      logBalanceCalculation(c.id, totalCredit, totalCollections, balance, storedOutstanding, balance);
+
       if (bEntry) {
         bEntry.balance = balance;
         bEntry.last_updated = customerTxs.length > 0 
@@ -911,20 +937,7 @@ export function getCustomers(merchantId, dateStr) {
           
           if (deleted) return null;
           
-          const custTxs = transactions.filter(t => t.customer_id === c.id);
-          let totalCredit = 0;
-          let totalCollections = 0;
-          
-          const balance = custTxs.reduce((sum, t) => {
-            const amt = parseFloat(t.amount);
-            if (t.type === 'credit') {
-              totalCredit += amt;
-              return sum + amt;
-            } else {
-              totalCollections += amt;
-              return Math.max(0, sum - amt);
-            }
-          }, 0);
+          const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(custTxs);
           
           const lastTx = custTxs.length > 0 
             ? [...custTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0] 
@@ -932,10 +945,9 @@ export function getCustomers(merchantId, dateStr) {
           const lastUpdated = lastTx ? lastTx.date : c.created_at;
           
           const balEntry = balanceMap.get(c.id);
-          const displayedOutstanding = balEntry ? parseFloat(balEntry.balance) : 0;
+          const storedOutstanding = balEntry ? parseFloat(balEntry.balance) : 0;
           
-          // Validation Logging (Task 7)
-          console.log(`[BALANCE VALIDATION] Customer ID: ${originalId} (${c.name}) | Total Credit: ₹${totalCredit} | Total Collections: ₹${totalCollections} | Calculated Outstanding: ₹${balance} | Displayed Outstanding (DB): ₹${displayedOutstanding}`);
+          logBalanceCalculation(originalId, totalCredit, totalCollections, balance, storedOutstanding, balance);
           
           return {
             id: originalId,
@@ -984,18 +996,7 @@ function getCustomersLocal(merchantId, dateStr) {
         ? custTxs.filter(t => getLocalDateStr(t.date) <= targetDate)
         : custTxs;
 
-      let totalCredit = 0;
-      let totalCollections = 0;
-      
-      const balance = filteredTxs.reduce((sum, t) => {
-        if (t.type === 'credit') {
-          totalCredit += t.amount;
-          return sum + t.amount;
-        } else {
-          totalCollections += t.amount;
-          return Math.max(0, sum - t.amount);
-        }
-      }, 0);
+      const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(filteredTxs);
 
       const lastTx = filteredTxs.length > 0 
         ? [...filteredTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0] 
@@ -1003,10 +1004,9 @@ function getCustomersLocal(merchantId, dateStr) {
       const lastActiveDate = lastTx ? lastTx.date : customer.created_at;
 
       const balEntry = (db.outstanding_balances || []).find(b => b.customer_id === customer.id && (b.merchant_id || 'merchant_1') === targetMerchantId);
-      const displayedOutstanding = balEntry ? balEntry.balance : 0;
+      const storedOutstanding = balEntry ? balEntry.balance : 0;
       
-      // Validation Logging (Task 7)
-      console.log(`[BALANCE VALIDATION LOCAL] Customer ID: ${customer.id} (${customer.name}) | Total Credit: ₹${totalCredit} | Total Collections: ₹${totalCollections} | Calculated Outstanding: ₹${balance} | Displayed Outstanding (DB): ₹${displayedOutstanding}`);
+      logBalanceCalculation(customer.id, totalCredit, totalCollections, balance, storedOutstanding, balance);
 
       return {
         ...customer,
@@ -1061,7 +1061,7 @@ export function getTransactions(merchantId, dateStr) {
           description,
           date: t.date
         };
-      }).sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime());
+      }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
       setCachedQueryResult(cacheKey, result);
       return result;
@@ -1585,15 +1585,14 @@ export function updateCustomer(id, { name, phone, alias, address, notes, custome
       
       const customerTxs = await supabase.from('transactions').select('*').eq('customer_id', toUUID(id));
       const txs = customerTxs.data || [];
-      const balance = txs.reduce((sum, t) => {
-        const amt = parseFloat(t.amount);
-        if (t.type === 'credit') return sum + amt;
-        return Math.max(0, sum - amt);
-      }, 0);
+      const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(txs);
       const lastTx = txs.length > 0
         ? [...txs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]
         : null;
       const lastActiveDate = lastTx ? lastTx.date : customer.created_at;
+
+      const storedOutstanding = 0; // Not queried here
+      logBalanceCalculation(id, totalCredit, totalCollections, balance, storedOutstanding, balance);
 
       return {
         ...updatedCust,
@@ -1714,10 +1713,9 @@ function updateCustomerLocal(id, { name, phone, alias, address, notes, customerT
     : null;
   const lastActiveDate = lastTx ? lastTx.date : customer.created_at;
 
-  const balance = custTxs.reduce((sum, t) => {
-    if (t.type === 'credit') return sum + t.amount;
-    return Math.max(0, sum - t.amount);
-  }, 0);
+  const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(custTxs);
+  const storedOutstanding = 0; // Not queried here
+  logBalanceCalculation(id, totalCredit, totalCollections, balance, storedOutstanding, balance);
 
   return {
     ...customer,
@@ -1733,10 +1731,9 @@ export function syncRemindersForCustomer(db, customerId, merchantId) {
   const customerTxs = (db.transactions || []).filter(t => t.customer_id === customerId && (t.merchant_id || 'merchant_1') === targetMerchantId);
   
   // Find customer balance dynamically from transaction history
-  const balance = customerTxs.reduce((sum, t) => {
-    if (t.type === 'credit') return sum + t.amount;
-    return Math.max(0, sum - t.amount);
-  }, 0);
+  const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(customerTxs);
+  const storedOutstanding = 0; // Not queried here
+  logBalanceCalculation(customerId, totalCredit, totalCollections, balance, storedOutstanding, balance);
 
   // Clear existing pending reminders for this customer
   db.reminders = (db.reminders || []).filter(r => !(r.customer_id === customerId && r.status === 'pending' && (r.merchant_id || 'merchant_1') === targetMerchantId));
@@ -1813,12 +1810,10 @@ export async function deleteTransaction(id, merchantId) {
   // Remove the transaction
   db.transactions.splice(txIndex, 1);
 
-  // Recalculate outstanding balance
   const customerTxs = db.transactions.filter(t => t.customer_id === customerId && (t.merchant_id || 'merchant_1') === targetMerchantId);
-  const newBalance = customerTxs.reduce((sum, t) => {
-    if (t.type === 'credit') return sum + t.amount;
-    return Math.max(0, sum - t.amount);
-  }, 0);
+  const { totalCredit, totalCollections, balance: newBalance } = calculateBalanceFromTransactions(customerTxs);
+  const storedOutstanding = 0; // Not queried here
+  logBalanceCalculation(customerId, totalCredit, totalCollections, newBalance, storedOutstanding, newBalance);
 
   let balanceEntry = db.outstanding_balances.find(b => b.customer_id === customerId && (b.merchant_id || 'merchant_1') === targetMerchantId);
   if (balanceEntry) {
@@ -1850,10 +1845,9 @@ export async function deleteTransaction(id, merchantId) {
         .eq('customer_id', customerUuid);
       if (fErr) throw fErr;
 
-      const balance = (dbTxs || []).reduce((sum, t) => {
-        if (t.type === 'credit') return sum + parseFloat(t.amount);
-        return Math.max(0, sum - parseFloat(t.amount));
-      }, 0);
+      const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(dbTxs);
+      const storedOutstanding = 0; // Not queried here
+      logBalanceCalculation(customerId, totalCredit, totalCollections, balance, storedOutstanding, balance);
 
       const { error: bErr } = await supabase.from('outstanding_balances').upsert({
         customer_id: customerUuid,
@@ -1979,10 +1973,9 @@ export function getCustomerLedger(customerId, merchantId, dateStr) {
         };
       }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
       
-      const balance = transactions.reduce((sum, t) => {
-        if (t.type === 'credit') return sum + t.amount;
-        return Math.max(0, sum - t.amount);
-      }, 0);
+      const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(transactions);
+      const storedOutstanding = 0; // Not queried here
+      logBalanceCalculation(customerId, totalCredit, totalCollections, balance, storedOutstanding, balance);
       
       const lastActiveDate = transactions.length > 0 ? transactions[transactions.length - 1].date : customerData.created_at;
       
@@ -2036,7 +2029,7 @@ function getCustomerLedgerLocal(customerId, merchantId, dateStr) {
   const targetDate = dateStr ? dateStr.slice(0, 10) : null;
   const transactions = (db.transactions || [])
     .filter(t => t.customer_id === customerId && (t.merchant_id || 'merchant_1') === targetMerchantId && (!targetDate || getLocalDateStr(t.date) <= targetDate))
-    .sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime());
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
   const reminders = getRemindersLocal(targetMerchantId, dateStr).filter(r => r.customer_id === customerId);
 
@@ -2141,11 +2134,9 @@ export function addTransaction({ customerId, amount, type, description, date, al
         .eq('customer_id', customerUuid);
       if (txsErr) throw txsErr;
       
-      const balance = (dbTxs || []).reduce((sum, t) => {
-        const amt = parseFloat(t.amount);
-        if (t.type === 'credit') return sum + amt;
-        return Math.max(0, sum - amt);
-      }, 0);
+      const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(dbTxs);
+      const storedOutstanding = 0; // Not queried here
+      logBalanceCalculation(customerId, totalCredit, totalCollections, balance, storedOutstanding, balance);
       
       console.log(`[SUPABASE QUERY] addTransaction (Insert & Dynamic Recalculate Balance) - Duration: ${Date.now() - queryStart}ms`);
       
@@ -2195,10 +2186,8 @@ export function addTransaction({ customerId, amount, type, description, date, al
       db.transactions.push(newTx);
       
       const customerTxs = (db.transactions || []).filter(t => t.customer_id === customerId && (t.merchant_id || 'merchant_1') === targetMerchantId);
-      const localBalance = customerTxs.reduce((sum, t) => {
-        if (t.type === 'credit') return sum + t.amount;
-        return Math.max(0, sum - t.amount);
-      }, 0);
+      const { totalCredit: localCredit, totalCollections: localCollections, balance: localBalance } = calculateBalanceFromTransactions(customerTxs);
+      logBalanceCalculation(customerId, localCredit, localCollections, localBalance, 0, localBalance);
 
       let localBalanceEntry = db.outstanding_balances.find(b => b.customer_id === customerId && (b.merchant_id || 'merchant_1') === targetMerchantId);
       if (!localBalanceEntry) {
@@ -2257,10 +2246,8 @@ function addTransactionLocal({ customerId, amount, type, description, date, alia
   console.log(`[TRANSACTION ATTACHED] Added ${type} of ₹${parsedAmount} to customer ID ${customerId}`);
 
   const customerTxs = (db.transactions || []).filter(t => t.customer_id === customerId && (t.merchant_id || 'merchant_1') === targetMerchantId);
-  const localBalance = customerTxs.reduce((sum, t) => {
-    if (t.type === 'credit') return sum + t.amount;
-    return Math.max(0, sum - t.amount);
-  }, 0);
+  const { totalCredit, totalCollections, balance: localBalance } = calculateBalanceFromTransactions(customerTxs);
+  logBalanceCalculation(customerId, totalCredit, totalCollections, localBalance, 0, localBalance);
 
   let balanceEntry = db.outstanding_balances.find(b => b.customer_id === customerId && (b.merchant_id || 'merchant_1') === targetMerchantId);
   if (!balanceEntry) {
@@ -2341,10 +2328,8 @@ export function getReminders(merchantId, dateStr) {
       
       for (const customer of customers) {
         const customerTxs = transactions.filter(t => t.customer_id === customer.id);
-        const balance = customerTxs.reduce((sum, t) => {
-          if (t.type === 'credit') return sum + t.amount;
-          return Math.max(0, sum - t.amount);
-        }, 0);
+        const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(customerTxs);
+        logBalanceCalculation(customer.id, totalCredit, totalCollections, balance, 0, balance);
         
         if (balance > 0) {
           const credits = customerTxs
@@ -2424,20 +2409,18 @@ function getRemindersLocal(merchantId, dateStr) {
       getLocalDateStr(t.date) <= targetDate
     );
 
-    const balance = customerTxs.reduce((sum, t) => {
-      if (t.type === 'credit') return sum + t.amount;
-      return Math.max(0, sum - t.amount);
-    }, 0);
+    const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(customerTxs);
+    logBalanceCalculation(customer.id, totalCredit, totalCollections, balance, 0, balance);
 
     if (balance > 0) {
       const credits = customerTxs
         .filter(t => t.type === 'credit')
-        .sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime())
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
         .map(t => ({ date: t.date, amount: t.amount, remaining: t.amount }));
 
       const collections = customerTxs
         .filter(t => t.type === 'collection')
-        .sort((a, b) => new Date(a.date).getTime() - new Date(a.date).getTime());
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
       for (const col of collections) {
         let colAmount = col.amount;
@@ -2689,10 +2672,8 @@ export async function syncFromSupabase() {
     const activeCustomers = dbData.customers.filter(c => !c.deleted);
     for (const c of activeCustomers) {
       const custTxs = dbData.transactions.filter(t => t.customer_id === c.id);
-      const balance = custTxs.reduce((sum, t) => {
-        if (t.type === 'credit') return sum + parseFloat(t.amount);
-        return Math.max(0, sum - parseFloat(t.amount));
-      }, 0);
+      const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(custTxs);
+      logBalanceCalculation(c.id, totalCredit, totalCollections, balance, 0, balance);
       
       const lastTx = custTxs.length > 0 
         ? [...custTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0] 
@@ -3004,10 +2985,8 @@ export async function mergeSpecificCustomers(masterId, duplicateId, merchantId) 
   
   // Recalculate outstanding balances for master
   const masterTxs = db.transactions.filter(tx => tx.customer_id === master.id && (tx.merchant_id || 'merchant_1') === targetMerchantId);
-  const balance = masterTxs.reduce((sum, tx) => {
-    if (tx.type === 'credit') return sum + tx.amount;
-    return Math.max(0, sum - tx.amount);
-  }, 0);
+  const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(masterTxs);
+  logBalanceCalculation(master.id, totalCredit, totalCollections, balance, 0, balance);
   
   // Remove duplicate outstanding balance entry
   db.outstanding_balances = (db.outstanding_balances || []).filter(b => b.customer_id !== duplicate.id);
