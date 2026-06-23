@@ -93,7 +93,7 @@ export function calculateBalanceFromTransactions(txs) {
   return {
     totalCredit,
     totalCollections,
-    balance: totalCredit - totalCollections
+    balance: Math.max(0, totalCredit - totalCollections)
   };
 }
 
@@ -937,6 +937,7 @@ export function getCustomers(merchantId, dateStr) {
           
           if (deleted) return null;
           
+          const custTxs = transactions.filter(t => t.customer_id === c.id);
           const { totalCredit, totalCollections, balance } = calculateBalanceFromTransactions(custTxs);
           
           const lastTx = custTxs.length > 0 

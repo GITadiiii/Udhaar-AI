@@ -88,7 +88,7 @@ BEGIN
     FROM transactions
     WHERE customer_id = v_customer_id;
 
-    v_balance := v_total_credit - v_total_collection;
+    v_balance := GREATEST(0.00, v_total_credit - v_total_collection);
 
     -- Upsert into outstanding_balances
     INSERT INTO outstanding_balances (customer_id, merchant_id, balance, last_updated)

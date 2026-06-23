@@ -169,7 +169,12 @@ export function clearCacheForDate(date?: string) {
 }
 
 export function clearLedgerCache(customerId: string) {
-  delete ledgerCache[customerId];
+  // Clear all memory caches for this customer
+  Object.keys(ledgerCache).forEach(k => {
+    if (k.startsWith(customerId)) {
+      delete ledgerCache[k];
+    }
+  });
   deleteCachedData('ledger', customerId);
 
   try {
@@ -254,6 +259,7 @@ export async function createCustomer(name: string, phone: string, alias?: string
     body: JSON.stringify({ name, phone, alias, confirmNew })
   });
   await checkResponse(res, 'Failed to create customer');
+  clearAllCaches();
   return res.json();
 }
 
@@ -263,6 +269,7 @@ export async function deleteCustomer(id: string): Promise<any> {
     headers: getHeaders()
   });
   await checkResponse(res, 'Failed to delete customer');
+  clearAllCaches();
   return res.json();
 }
 
@@ -283,6 +290,7 @@ export async function updateCustomer(
     body: JSON.stringify(updatedFields)
   });
   await checkResponse(res, 'Failed to update customer');
+  clearAllCaches();
   return res.json();
 }
 
@@ -325,6 +333,7 @@ export async function createTransaction(tx: {
     body: JSON.stringify(tx)
   });
   await checkResponse(res, 'Failed to record transaction');
+  clearAllCaches();
   return res.json();
 }
 
@@ -404,6 +413,7 @@ export async function deleteTransaction(id: string): Promise<any> {
     headers: getHeaders()
   });
   await checkResponse(res, 'Failed to delete transaction');
+  clearAllCaches();
   return res.json();
 }
 
