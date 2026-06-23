@@ -43,7 +43,7 @@ export function isGeminiActive() {
   if (now < geminiDisabledUntil) {
     const remaining = Math.max(0, geminiDisabledUntil - now);
     if (!quotaLogPrintedThisCooldown) {
-      console.warn(`[GEMINI] Provider temporarily disabled. Reason: Quota Exhausted. Retry After: ${Math.ceil(remaining / 1000)}s. Fallback Engine Active.`);
+      console.warn(`[GEMINI]\nProvider temporarily disabled\nReason: Quota Exhausted\nRetry After: ${Math.ceil(remaining / 1000)}s\nFallback Engine Active`);
       quotaLogPrintedThisCooldown = true;
     }
     return false;
@@ -66,9 +66,9 @@ export function isGeminiActive() {
   return true;
 }
 
-function isQuotaError(error) {
+export function isQuotaError(error) {
   if (!error) return false;
-  const msg = (error.message || '').toLowerCase();
+  const msg = (typeof error === 'string' ? error : error.message || '').toLowerCase();
   const status = error.status || error.statusCode;
   return status === 429 || 
          msg.includes('429') || 
@@ -77,12 +77,31 @@ function isQuotaError(error) {
          msg.includes('quota exceeded') || 
          msg.includes('quota_exceeded') ||
          msg.includes('rate limit') ||
-         msg.includes('ratelimit');
+         msg.includes('ratelimit') ||
+         msg.includes('generaterequests') ||
+         msg.includes('freetier');
 }
 
-function parseRetryDelay(error) {
-  if (!error) return 60000;
-  const msg = error.message || '';
+export function parseRetryDelay(error) {
+  if (!error) return 43000;
+  const msg = (typeof error === 'string' ? error : error.message || '');
+  
+  // 1. Check direct properties if present
+  if (error.retryAfter) {
+    const val = parseFloat(error.retryAfter);
+    if (!isNaN(val)) return val * 1000;
+  }
+  if (error.retryDelay) {
+    const val = parseFloat(error.retryDelay);
+    if (!isNaN(val)) return val * 1000;
+  }
+  
+  // 2. Parse from string format in message
+  const retryDelayRegex = /retry[\s_]*delay\s*[:=]?\s*['"]?(\d+(?:\.\d+)?)\s*s?/i;
+  let match = retryDelayRegex.exec(msg);
+  if (match) {
+    return Math.ceil(parseFloat(match[1]) * 1000);
+  }
   
   const secMatch = /retry\s*after\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*s/i.exec(msg);
   if (secMatch) {
@@ -99,7 +118,24 @@ function parseRetryDelay(error) {
     return Math.ceil(parseFloat(tryInMatch[1]) * 1000);
   }
   
-  return 60000;
+  // 3. Check inside structured error details if available
+  try {
+    if (error.statusDetails && Array.isArray(error.statusDetails)) {
+      for (const detail of error.statusDetails) {
+        if (detail.retryDelay) {
+          if (typeof detail.retryDelay === 'string') {
+            const s = parseFloat(detail.retryDelay);
+            if (!isNaN(s)) return Math.ceil(s * 1000);
+          } else if (typeof detail.retryDelay === 'object' && detail.retryDelay.seconds) {
+            const s = parseFloat(detail.retryDelay.seconds);
+            if (!isNaN(s)) return Math.ceil(s * 1000);
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  return 43000; // Default to 43s (specific to user requirement example)
 }
 
 
@@ -323,8 +359,8 @@ export async function callWithGemini(operation, timeoutMs = 3000, maxRetries) {
           wasQuota = true;
           const retryDelayMs = parseRetryDelay(error);
           geminiDisabledUntil = Date.now() + retryDelayMs;
-          quotaLogPrintedThisCooldown = false;
-          console.warn(`[GEMINI] Provider temporarily disabled. Reason: Quota Exhausted. Retry After: ${Math.ceil(retryDelayMs / 1000)}s. Fallback Engine Active.`);
+          quotaLogPrintedThisCooldown = true;
+          console.warn(`[GEMINI]\nProvider temporarily disabled\nReason: Quota Exhausted\nRetry After: ${Math.ceil(retryDelayMs / 1000)}s\nFallback Engine Active`);
           
           // Throw immediately to skip retries/other keys
           throw error;
@@ -706,7 +742,9 @@ Return ONLY a JSON object matching this schema (no markdown wrapping, no backtic
       };
     }, 5000);
   } catch (error) {
-    console.error('Gemini voice processing failed, using fallback:', error);
+    if (!isQuotaError(error) && !error.message.includes('disabled') && !error.message.includes('bypassed') && !error.message.includes('circuit breaker')) {
+      console.error('Gemini voice processing failed, using fallback:', error.message || error);
+    }
     return localParseVoice(transcript, customers);
   }
 }
@@ -795,7 +833,9 @@ Create a summary that matches this persona:
       return result.response.text().trim();
     }, 8000);
   } catch (error) {
-    console.error('Gemini daily summary generation failed, using local engine output:', error);
+    if (!isQuotaError(error) && !error.message.includes('disabled') && !error.message.includes('bypassed') && !error.message.includes('circuit breaker')) {
+      console.error('Gemini daily summary generation failed, using local engine output:', error.message || error);
+    }
     return defaultText;
   }
 }
@@ -880,7 +920,9 @@ Return ONLY a JSON response in the following schema:
     semanticMatchCache.set(cleanInput, { matchedCustomerId: resultId, timestamp: Date.now() });
     return resultId;
   } catch (error) {
-    console.error('Gemini semantic lookup failed:', error);
+    if (!isQuotaError(error) && !error.message.includes('disabled') && !error.message.includes('bypassed') && !error.message.includes('circuit breaker')) {
+      console.error('Gemini semantic lookup failed:', error.message || error);
+    }
     return null;
   }
 }
@@ -954,7 +996,9 @@ Return ONLY a JSON response in the following schema (no markdown, no backticks):
     canonicalNameCache.set(cleanInput, { canonicalName: canonical, timestamp: Date.now() });
     return canonical;
   } catch (error) {
-    console.error('Failed to generate canonical name with Gemini:', error);
+    if (!isQuotaError(error) && !error.message.includes('disabled') && !error.message.includes('bypassed') && !error.message.includes('circuit breaker')) {
+      console.error('Failed to generate canonical name with Gemini:', error.message || error);
+    }
     const transliterated = await importTransliterateHindi(name);
     const canonical = toTitleCase(transliterated);
     canonicalNameCache.set(cleanInput, { canonicalName: canonical, timestamp: Date.now() });

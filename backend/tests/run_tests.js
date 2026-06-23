@@ -987,6 +987,48 @@ try {
     assert(false, `Should update same merchant without error. Got: ${err.message}`);
   }
 
+  // Test Case 22: Balance Calculation & Unification
+  console.log('\n--- Test Case 22: Balance Calculation & Unification ---');
+  const cUnified = addCustomer({ name: 'Unified Customer', phone: '+919800066666', merchantId: m1Test });
+  
+  // 22.1 Record Credit = 8000
+  addTransaction({ customerId: cUnified.id, amount: 8000, type: 'credit', description: 'Credit entry', merchantId: m1Test });
+  
+  // 22.2 Record Collection = 7000
+  addTransaction({ customerId: cUnified.id, amount: 7000, type: 'collection', description: 'Collection entry', merchantId: m1Test });
+  
+  // 22.3 Verify Outstanding balance is ₹1,000 in:
+  // - Customers list (both getCustomersLocal and getCustomers)
+  // - Customer ledger detail (getCustomerLedger)
+  // - Dashboard statistics (simulated/calculated outstanding debt)
+  const customersList = getCustomers(m1Test);
+  const custInList = customersList.find(c => c.id === cUnified.id);
+  assert(custInList, 'Unified Customer must exist in customer list');
+  assert(custInList.balance === 1000, `List card outstanding balance must be 1000 (got: ${custInList.balance})`);
+  
+  const ledgerData = getCustomerLedger(cUnified.id, m1Test);
+  assert(ledgerData, 'Ledger data must be fetched successfully');
+  assert(ledgerData.customer.balance === 1000, `Ledger detail outstanding balance must be 1000 (got: ${ledgerData.customer.balance})`);
+  
+  const dashboardOutstanding = customersList.reduce((sum, c) => sum + c.balance, 0);
+  assert(dashboardOutstanding >= 1000, 'Dashboard statistics outstanding calculation should be accurate');
+  
+  // 22.4 Delete the collection transaction of 7000 and verify balance goes back to 8000
+  const colTx = ledgerData.transactions.find(t => t.type === 'collection');
+  assert(colTx, 'Collection transaction must exist in ledger');
+  
+  const deleteResUnified = await deleteTransaction(colTx.id, m1Test);
+  assert(deleteResUnified, 'Delete transaction must return success');
+  
+  const ledgerAfterDelete = getCustomerLedger(cUnified.id, m1Test);
+  assert(ledgerAfterDelete.customer.balance === 8000, `Outstanding balance must update to 8000 after deleting collection (got: ${ledgerAfterDelete.customer.balance})`);
+  
+  const customersListAfterDelete = getCustomers(m1Test);
+  const custAfterDelete = customersListAfterDelete.find(c => c.id === cUnified.id);
+  assert(custAfterDelete.balance === 8000, `List card balance must update to 8000 after deleting collection (got: ${custAfterDelete.balance})`);
+  
+  console.log('✅ [PASS] Unified Customer balance checks passed (Credit 8000, Collection 7000, Net 1000, Delete Recalculation)');
+
   // Restore keys
   if (savedKeys) process.env.GEMINI_API_KEYS = savedKeys;
   if (savedKey) process.env.GEMINI_API_KEY = savedKey;

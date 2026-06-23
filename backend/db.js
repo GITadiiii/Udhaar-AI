@@ -859,6 +859,11 @@ export function getCustomers(merchantId, dateStr) {
       const { supabase } = await import('./supabase.js');
       const merchantUuid = toUUID(targetMerchantId);
       
+      let txQuery = supabase.from('transactions').select('*').eq('merchant_id', merchantUuid);
+      if (dateStr) {
+        txQuery = txQuery.lte('date', new Date(dateStr + 'T23:59:59.999Z').toISOString());
+      }
+      
       // Parallelize Supabase reads
       const queryStart = Date.now();
       const [cRes, bRes, tRes] = await Promise.all([
@@ -870,13 +875,7 @@ export function getCustomers(merchantId, dateStr) {
           .from('outstanding_balances')
           .select('*')
           .eq('merchant_id', merchantUuid),
-        dateStr
-          ? supabase
-              .from('transactions')
-              .select('*')
-              .eq('merchant_id', merchantUuid)
-              .lte('date', new Date(dateStr + 'T23:59:59.999Z').toISOString())
-          : Promise.resolve({ data: [] })
+        txQuery
       ]);
       console.log(`[SUPABASE QUERY] getCustomers (Parallelized Reads) - Duration: ${Date.now() - queryStart}ms`);
       
@@ -912,26 +911,31 @@ export function getCustomers(merchantId, dateStr) {
           
           if (deleted) return null;
           
-          let balance = 0;
-          let lastUpdated = c.created_at;
+          const custTxs = transactions.filter(t => t.customer_id === c.id);
+          let totalCredit = 0;
+          let totalCollections = 0;
           
-          if (dateStr) {
-            const custTxs = transactions.filter(t => t.customer_id === c.id);
-            balance = custTxs.reduce((sum, t) => {
-              if (t.type === 'credit') return sum + parseFloat(t.amount);
-              return Math.max(0, sum - parseFloat(t.amount));
-            }, 0);
-            const lastTx = custTxs.length > 0 
-              ? [...custTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0] 
-              : null;
-            if (lastTx) lastUpdated = lastTx.date;
-          } else {
-            const balEntry = balanceMap.get(c.id);
-            if (balEntry) {
-              balance = parseFloat(balEntry.balance);
-              lastUpdated = balEntry.last_updated;
+          const balance = custTxs.reduce((sum, t) => {
+            const amt = parseFloat(t.amount);
+            if (t.type === 'credit') {
+              totalCredit += amt;
+              return sum + amt;
+            } else {
+              totalCollections += amt;
+              return Math.max(0, sum - amt);
             }
-          }
+          }, 0);
+          
+          const lastTx = custTxs.length > 0 
+            ? [...custTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0] 
+            : null;
+          const lastUpdated = lastTx ? lastTx.date : c.created_at;
+          
+          const balEntry = balanceMap.get(c.id);
+          const displayedOutstanding = balEntry ? parseFloat(balEntry.balance) : 0;
+          
+          // Validation Logging (Task 7)
+          console.log(`[BALANCE VALIDATION] Customer ID: ${originalId} (${c.name}) | Total Credit: ₹${totalCredit} | Total Collections: ₹${totalCollections} | Calculated Outstanding: ₹${balance} | Displayed Outstanding (DB): ₹${displayedOutstanding}`);
           
           return {
             id: originalId,
@@ -980,15 +984,29 @@ function getCustomersLocal(merchantId, dateStr) {
         ? custTxs.filter(t => getLocalDateStr(t.date) <= targetDate)
         : custTxs;
 
+      let totalCredit = 0;
+      let totalCollections = 0;
+      
       const balance = filteredTxs.reduce((sum, t) => {
-        if (t.type === 'credit') return sum + t.amount;
-        return Math.max(0, sum - t.amount);
+        if (t.type === 'credit') {
+          totalCredit += t.amount;
+          return sum + t.amount;
+        } else {
+          totalCollections += t.amount;
+          return Math.max(0, sum - t.amount);
+        }
       }, 0);
 
       const lastTx = filteredTxs.length > 0 
         ? [...filteredTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0] 
         : null;
       const lastActiveDate = lastTx ? lastTx.date : customer.created_at;
+
+      const balEntry = (db.outstanding_balances || []).find(b => b.customer_id === customer.id && (b.merchant_id || 'merchant_1') === targetMerchantId);
+      const displayedOutstanding = balEntry ? balEntry.balance : 0;
+      
+      // Validation Logging (Task 7)
+      console.log(`[BALANCE VALIDATION LOCAL] Customer ID: ${customer.id} (${customer.name}) | Total Credit: ₹${totalCredit} | Total Collections: ₹${totalCollections} | Calculated Outstanding: ₹${balance} | Displayed Outstanding (DB): ₹${displayedOutstanding}`);
 
       return {
         ...customer,
@@ -1565,7 +1583,23 @@ export function updateCustomer(id, { name, phone, alias, address, notes, custome
         await supabase.from('reminders').insert(remindersToInsert);
       }
       
-      return updatedCust;
+      const customerTxs = await supabase.from('transactions').select('*').eq('customer_id', toUUID(id));
+      const txs = customerTxs.data || [];
+      const balance = txs.reduce((sum, t) => {
+        const amt = parseFloat(t.amount);
+        if (t.type === 'credit') return sum + amt;
+        return Math.max(0, sum - amt);
+      }, 0);
+      const lastTx = txs.length > 0
+        ? [...txs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]
+        : null;
+      const lastActiveDate = lastTx ? lastTx.date : customer.created_at;
+
+      return {
+        ...updatedCust,
+        balance,
+        last_updated: lastActiveDate
+      };
     } catch (err) {
       console.error('[SUPABASE WRITE ERROR] Customer update failed:', err.message);
       throw err;
@@ -1680,10 +1714,14 @@ function updateCustomerLocal(id, { name, phone, alias, address, notes, customerT
     : null;
   const lastActiveDate = lastTx ? lastTx.date : customer.created_at;
 
-  const balanceEntry = db.outstanding_balances.find(b => b.customer_id === id);
+  const balance = custTxs.reduce((sum, t) => {
+    if (t.type === 'credit') return sum + t.amount;
+    return Math.max(0, sum - t.amount);
+  }, 0);
+
   return {
     ...customer,
-    balance: balanceEntry ? balanceEntry.balance : 0,
+    balance,
     last_updated: lastActiveDate
   };
 }
@@ -1691,16 +1729,19 @@ function updateCustomerLocal(id, { name, phone, alias, address, notes, customerT
 export function syncRemindersForCustomer(db, customerId, merchantId) {
   const targetMerchantId = merchantId || 'merchant_1';
   
-  // Find customer balance
-  const balanceEntry = db.outstanding_balances.find(b => b.customer_id === customerId && (b.merchant_id || 'merchant_1') === targetMerchantId);
-  const balance = balanceEntry ? balanceEntry.balance : 0;
+  // Find all transactions for this customer
+  const customerTxs = (db.transactions || []).filter(t => t.customer_id === customerId && (t.merchant_id || 'merchant_1') === targetMerchantId);
+  
+  // Find customer balance dynamically from transaction history
+  const balance = customerTxs.reduce((sum, t) => {
+    if (t.type === 'credit') return sum + t.amount;
+    return Math.max(0, sum - t.amount);
+  }, 0);
 
   // Clear existing pending reminders for this customer
   db.reminders = (db.reminders || []).filter(r => !(r.customer_id === customerId && r.status === 'pending' && (r.merchant_id || 'merchant_1') === targetMerchantId));
 
   if (balance > 0) {
-    // Find all transactions for this customer
-    const customerTxs = (db.transactions || []).filter(t => t.customer_id === customerId && (t.merchant_id || 'merchant_1') === targetMerchantId);
     
     // Sort credits chronologically (ascending date)
     const credits = customerTxs
@@ -2075,31 +2116,38 @@ export function addTransaction({ customerId, amount, type, description, date, al
       }
       
       const queryStart = Date.now();
-      // 1. Fetch previous balance in parallel with transaction insert
-      const [tRes, balRes] = await Promise.all([
-        supabase.from('transactions').insert({
-          id: toUUID(txId),
-          customer_id: customerUuid,
-          merchant_id: merchantUuid,
-          amount: parsedAmount,
-          type,
-          description: JSON.stringify({
-            description: newTx.description,
-            original_id: txId,
-            original_customer_id: customerId,
-            merchant_id: targetMerchantId
-          }),
-          date: txDate
+      // 1. Insert transaction
+      const tRes = await supabase.from('transactions').insert({
+        id: toUUID(txId),
+        customer_id: customerUuid,
+        merchant_id: merchantUuid,
+        amount: parsedAmount,
+        type,
+        description: JSON.stringify({
+          description: newTx.description,
+          original_id: txId,
+          original_customer_id: customerId,
+          merchant_id: targetMerchantId
         }),
-        supabase.from('outstanding_balances').select('balance').eq('customer_id', customerUuid).maybeSingle()
-      ]);
+        date: txDate
+      });
       
       if (tRes.error) throw tRes.error;
-      if (balRes.error) throw balRes.error;
-      console.log(`[SUPABASE QUERY] addTransaction (Parallelized Insert & Balance Select) - Duration: ${Date.now() - queryStart}ms`);
       
-      const prevBalance = balRes.data ? parseFloat(balRes.data.balance) : 0;
-      const balance = type === 'credit' ? prevBalance + parsedAmount : Math.max(0, prevBalance - parsedAmount);
+      // Fetch all transactions for this customer to calculate the balance dynamically
+      const { data: dbTxs, error: txsErr } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('customer_id', customerUuid);
+      if (txsErr) throw txsErr;
+      
+      const balance = (dbTxs || []).reduce((sum, t) => {
+        const amt = parseFloat(t.amount);
+        if (t.type === 'credit') return sum + amt;
+        return Math.max(0, sum - amt);
+      }, 0);
+      
+      console.log(`[SUPABASE QUERY] addTransaction (Insert & Dynamic Recalculate Balance) - Duration: ${Date.now() - queryStart}ms`);
       
       // 2. Upsert outstanding balance
       const { error: bErr } = await supabase.from('outstanding_balances').upsert({
@@ -2145,17 +2193,22 @@ export function addTransaction({ customerId, amount, type, description, date, al
       
       const db = readDb();
       db.transactions.push(newTx);
+      
+      const customerTxs = (db.transactions || []).filter(t => t.customer_id === customerId && (t.merchant_id || 'merchant_1') === targetMerchantId);
+      const localBalance = customerTxs.reduce((sum, t) => {
+        if (t.type === 'credit') return sum + t.amount;
+        return Math.max(0, sum - t.amount);
+      }, 0);
+
       let localBalanceEntry = db.outstanding_balances.find(b => b.customer_id === customerId && (b.merchant_id || 'merchant_1') === targetMerchantId);
       if (!localBalanceEntry) {
-        localBalanceEntry = { customer_id: customerId, merchant_id: targetMerchantId, balance: 0, last_updated: txDate };
+        localBalanceEntry = { customer_id: customerId, merchant_id: targetMerchantId, balance: localBalance, last_updated: txDate };
         db.outstanding_balances.push(localBalanceEntry);
-      }
-      if (type === 'credit') {
-        localBalanceEntry.balance += parsedAmount;
       } else {
-        localBalanceEntry.balance = Math.max(0, localBalanceEntry.balance - parsedAmount);
+        localBalanceEntry.balance = localBalance;
+        localBalanceEntry.last_updated = txDate;
       }
-      localBalanceEntry.last_updated = txDate;
+      
       syncRemindersForCustomer(db, customerId, targetMerchantId);
       invalidateSpecificSummary(db, targetMerchantId, txDate);
       fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
@@ -2203,18 +2256,20 @@ function addTransactionLocal({ customerId, amount, type, description, date, alia
   db.transactions.push(newTx);
   console.log(`[TRANSACTION ATTACHED] Added ${type} of ₹${parsedAmount} to customer ID ${customerId}`);
 
+  const customerTxs = (db.transactions || []).filter(t => t.customer_id === customerId && (t.merchant_id || 'merchant_1') === targetMerchantId);
+  const localBalance = customerTxs.reduce((sum, t) => {
+    if (t.type === 'credit') return sum + t.amount;
+    return Math.max(0, sum - t.amount);
+  }, 0);
+
   let balanceEntry = db.outstanding_balances.find(b => b.customer_id === customerId && (b.merchant_id || 'merchant_1') === targetMerchantId);
   if (!balanceEntry) {
-    balanceEntry = { customer_id: customerId, merchant_id: targetMerchantId, balance: 0, last_updated: txDate };
+    balanceEntry = { customer_id: customerId, merchant_id: targetMerchantId, balance: localBalance, last_updated: txDate };
     db.outstanding_balances.push(balanceEntry);
-  }
-
-  if (type === 'credit') {
-    balanceEntry.balance += parsedAmount;
   } else {
-    balanceEntry.balance = Math.max(0, balanceEntry.balance - parsedAmount);
+    balanceEntry.balance = localBalance;
+    balanceEntry.last_updated = txDate;
   }
-  balanceEntry.last_updated = txDate;
 
   syncRemindersForCustomer(db, customerId, targetMerchantId);
   invalidateSpecificSummary(db, targetMerchantId, txDate);

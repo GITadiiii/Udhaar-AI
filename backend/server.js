@@ -30,7 +30,8 @@ import {
   generateDailySummary,
   resolveSemanticMatch,
   getCanonicalName,
-  getGeminiMetrics
+  getGeminiMetrics,
+  isGeminiActive
 } from './services/gemini.js';
 
 dotenv.config();
@@ -332,7 +333,13 @@ Decision: ${decision}`);
     res.status(201).json(customer);
 
     // 4. Run AI enrichment and semantic duplicate matching in the background
-    (async () => {
+    // Defer to low-priority queue to keep customer creation extremely fast
+    setTimeout(async () => {
+      if (!isGeminiActive()) {
+        console.log(`[BACKGROUND AI] Gemini is currently disabled (Quota Exhausted/Circuit Open). Skipping background enrichment.`);
+        return;
+      }
+
       const bgStartTime = Date.now();
       try {
         console.log(`[BACKGROUND AI START] Standardizing customer ID: ${customer.id} ("${localCanonicalName}")`);
@@ -373,7 +380,7 @@ Decision: ${decision}`);
       } catch (bgErr) {
         console.error(`[BACKGROUND AI ERROR] Enrichment or merge failed: ${bgErr.message}`);
       }
-    })();
+    }, 50);
   } catch (error) {
     console.error(`[CUSTOMER CREATE FAILURE] ${error.message} in ${Date.now() - startTime}ms`);
     res.status(500).json({ error: error.message });
