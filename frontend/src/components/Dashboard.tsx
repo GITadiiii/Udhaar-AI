@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Customer, Transaction } from '../types';
 import { ArrowUpRight, ArrowDownLeft, Users, AlertTriangle, MessageSquare, PhoneCall, Mic } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
+import { trackEvent } from '../utils/analytics';
 
 interface DashboardProps {
   customers: Customer[];
@@ -91,6 +92,16 @@ export default function Dashboard({ customers, transactions, reminders, onNaviga
   const criticalReminders = reminders
     .filter(r => r.status === 'pending')
     .slice(0, 3);
+
+  useEffect(() => {
+    trackEvent('dashboard_loaded', {
+      total_customers: customers.length,
+      active_customers: activeCustomers,
+      outstanding_debt: outstandingDebt,
+      collections_today: collectionsToday,
+      credit_given_today: creditGivenToday
+    });
+  }, []);
 
   return (
     <div className="space-y-8">

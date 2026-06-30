@@ -2,6 +2,7 @@ import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { fetchCustomers, fetchReminders, fetchTransactions, createCustomer, deleteCustomer, updateCustomer, fetchLedger, registerMerchant, clearCacheForDate, clearLedgerCache } from './utils/api';
 import { Customer, Reminder, Transaction } from './types';
 import Dashboard from './components/Dashboard'; // Static load for instant first-paint
+import { trackEvent, hashId } from './utils/analytics';
 import DatePicker from './components/DatePicker';
 import { LayoutDashboard, BookOpen, Mic, BellRing, Sparkles, Settings, LogOut, Store, CreditCard, Key, Smartphone, MapPin, RefreshCw, AlertTriangle, Menu, X } from 'lucide-react';
 
@@ -57,7 +58,19 @@ export default function App() {
   useEffect(() => {
     const firstPaint = performance.now() - ((window as any).APP_START_TIME || performance.now());
     console.log(`[PERFORMANCE] App Open -> First Paint / Render: ${firstPaint.toFixed(2)}ms`);
+    trackEvent('app_open', {
+      first_paint_ms: Math.round(firstPaint)
+    });
   }, []);
+
+  // Track ledger opened
+  useEffect(() => {
+    if (activePage === 'customers' && selectedCustomerId) {
+      trackEvent('ledger_opened', {
+        customer_id: hashId(selectedCustomerId)
+      });
+    }
+  }, [activePage, selectedCustomerId]);
 
   // Log App Open -> Dashboard Visible once data is present
   useEffect(() => {
@@ -135,6 +148,10 @@ export default function App() {
       localStorage.setItem('udhaar_business_category', editBusinessCategory);
       setIsEditProfileOpen(false);
       setIsAuthenticated(true);
+      
+      trackEvent('merchant_login', {
+        method: 'edit_profile'
+      });
     } catch (err: any) {
       alert(`Failed to update profile: ${err.message}`);
     }
@@ -166,6 +183,13 @@ export default function App() {
       localStorage.setItem('udhaar_business_type', createBusinessType);
       setIsCreateAccountOpen(false);
       setIsAuthenticated(true);
+
+      trackEvent('merchant_registered', {
+        business_type: createBusinessType
+      });
+      trackEvent('merchant_login', {
+        method: 'register'
+      });
     } catch (err: any) {
       alert(`Registration failed: ${err.message}`);
     } finally {
@@ -312,6 +336,9 @@ export default function App() {
 
   const handleMockLogin = () => {
     setIsAuthenticated(true);
+    trackEvent('merchant_login', {
+      method: 'mock_continue'
+    });
   };
 
   const handleLogout = () => {
@@ -831,6 +858,9 @@ export default function App() {
                       try {
                         await updateCustomer(id, data);
                         loadData(selectedDate, true);
+                        trackEvent('customer_updated', {
+                          customer_id: hashId(id)
+                        });
                       } catch (err) {
                         loadData(selectedDate, true);
                         throw err;
@@ -845,6 +875,10 @@ export default function App() {
                       try {
                         const result = await createCustomer(newC.name, newC.phone, newC.alias);
                         if (result.status === 'multiple_matches') {
+                          trackEvent('duplicate_customer_detected', {
+                            candidates_count: result.candidates?.length || 0,
+                            entry_method: 'manual'
+                          });
                           alert(`A customer with a similar name already exists: ${result.candidates.map((c: any) => c.name).join(', ')}. Please use a unique name.`);
                           throw new Error('Duplicate customer exists');
                         }
@@ -868,6 +902,10 @@ export default function App() {
                         setCustomers(prev => [...prev.filter(c => c.id !== result.id), newCreatedCustomer]);
                         
                         loadData(selectedDate, true);
+
+                        trackEvent('customer_created', {
+                          customer_created_from_voice: false
+                        });
                         
                         if (result.was_existing) {
                           alert(`Customer "${result.name}" already exists. Opening their ledger.`);
@@ -895,6 +933,9 @@ export default function App() {
                       try {
                         await deleteCustomer(id);
                         loadData(selectedDate, true);
+                        trackEvent('customer_deleted', {
+                          customer_id: hashId(id)
+                        });
                       } catch (err) {
                         loadData(selectedDate, true);
                         alert('Failed to delete customer');
@@ -908,6 +949,9 @@ export default function App() {
                       try {
                         await updateCustomer(id, data);
                         loadData(selectedDate, true);
+                        trackEvent('customer_updated', {
+                          customer_id: hashId(id)
+                        });
                       } catch (err) {
                         loadData(selectedDate, true);
                         alert('Failed to update customer');

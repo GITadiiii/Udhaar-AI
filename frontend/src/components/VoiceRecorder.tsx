@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { processVoice, createTransaction, createCustomer } from '../utils/api';
-import { Customer } from '../types';
-import { Mic, MicOff, AlertCircle, RefreshCw, CheckCircle, Info, User, HelpCircle } from 'lucide-react';
+import { Customer, Transaction } from '../types';
+import { Mic, MicOff, Check, X, Sparkles, UserPlus, AlertCircle, RefreshCw, Undo, HelpCircle, Loader2, CheckCircle, Info, User } from 'lucide-react';
+import { trackEvent } from '../utils/analytics';
 import confetti from 'canvas-confetti';
 
 interface VoiceRecorderProps {
@@ -273,8 +274,21 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
   };
 
   const handleExtract = async (text: string) => {
+    const startTime = performance.now();
+    trackEvent('voice_transaction_started', {
+      transcript_length: text.length
+    });
+
     try {
       const result = await processVoice(text);
+      const processingTime = Math.round(performance.now() - startTime);
+
+      trackEvent('voice_transaction_success', {
+        processing_time_ms: processingTime,
+        fallback_used: !!result.isAiFallback,
+        detected_type: result.type,
+        detected_amount: result.amount
+      });
       
       setExtractedName(sanitizeCustomerName(result.name));
       setExtractedAmount(result.amount);
@@ -283,12 +297,21 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
       setIsAiFallback(!!result.isAiFallback);
 
       if (result.status === 'multiple_matches' && result.candidates) {
+        trackEvent('duplicate_customer_detected', {
+          candidates_count: result.candidates.length,
+          entry_method: 'voice'
+        });
         setCandidates(result.candidates);
         setRecorderState('multiple_matches');
       } else {
         setRecorderState('confirming');
       }
-    } catch (err) {
+    } catch (err: any) {
+      const processingTime = Math.round(performance.now() - startTime);
+      trackEvent('voice_transaction_failed', {
+        processing_time_ms: processingTime,
+        error_message: err.message || 'Analysis failed'
+      });
       console.error(err);
       setErrorMsg('Failed to analyze transcript. Please enter details manually.');
       setRecorderState('idle');
@@ -336,6 +359,10 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
         const result = await createCustomer(cleanName, '', undefined, explicitConfirmNew);
         
         if (result.status === 'multiple_matches' && result.candidates) {
+          trackEvent('duplicate_customer_detected', {
+            candidates_count: result.candidates.length,
+            entry_method: 'voice'
+          });
           setCandidates(result.candidates);
           setRecorderState('multiple_matches');
           setIsSaving(false);
@@ -345,6 +372,10 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
         
         customerId = result.id;
         createdCustomer = result;
+
+        trackEvent('customer_created', {
+          customer_created_from_voice: true
+        });
       }
 
       setSaveProgress('recording_transaction');
@@ -355,6 +386,13 @@ export default function VoiceRecorder({ customers, onTransactionSaved, onNavigat
         type: extractedType as 'credit' | 'collection',
         description: `Voice: "${transcript || interimTranscript}"`,
         aliasSpoken: cleanName
+      });
+
+      trackEvent(extractedType === 'credit' ? 'credit_given' : 'collection_received', {
+        amount: extractedAmount,
+        entry_method: 'voice',
+        fallback_used: isAiFallback,
+        customer_created_from_voice: !matchedCustomer
       });
 
       setSaveProgress('success');

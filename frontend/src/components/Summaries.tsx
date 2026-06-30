@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { fetchDailySummary } from '../utils/api';
 import { DailySummary } from '../types';
 import { Sparkles, Calendar, TrendingDown, TrendingUp, AlertTriangle, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { trackEvent } from '../utils/analytics';
 
 interface SummariesProps {
   selectedDate: string;
@@ -18,6 +19,12 @@ export default function Summaries({ selectedDate }: SummariesProps) {
       const data = await fetchDailySummary(date);
       setSummary(data);
       setError(null);
+      trackEvent('ai_summary_viewed', {
+        date,
+        credit_given: data.credit_given,
+        collections: data.collections,
+        net_change: data.net_change
+      });
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Failed to fetch AI daily summary');

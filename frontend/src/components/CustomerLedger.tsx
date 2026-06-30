@@ -3,6 +3,7 @@ import { Ledger, Transaction } from '../types';
 import { fetchLedger, createTransaction, deleteTransaction, clearCacheForDate, clearLedgerCache } from '../utils/api';
 import { ArrowLeft, Phone, Calendar, ArrowUpRight, ArrowDownLeft, AlertCircle, Share2, Clipboard, MessageSquare, Plus, PlusCircle, CheckCircle, Trash2, X, AlertTriangle } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { trackEvent } from '../utils/analytics';
 
 interface CustomerLedgerProps {
   customerId: string;
@@ -160,6 +161,11 @@ export default function CustomerLedger({ customerId, onBack, onBalanceChange, on
         type: showTxModal,
         description: description.trim() || undefined,
         date: formattedDate
+      });
+
+      trackEvent(showTxModal === 'credit' ? 'credit_given' : 'collection_received', {
+        amount: parsedAmount,
+        entry_method: 'manual'
       });
 
       // Confetti feedback
@@ -417,6 +423,13 @@ export default function CustomerLedger({ customerId, onBack, onBalanceChange, on
               if (!customer.phone) {
                 e.preventDefault();
                 alert('This customer does not have a phone number saved.');
+              } else {
+                trackEvent('reminder_sent', {
+                  priority: 'Manual',
+                  amount: customer.balance,
+                  days_overdue: 0,
+                  method: 'whatsapp'
+                });
               }
             }}
             target={customer.phone ? "_blank" : undefined}
@@ -431,7 +444,15 @@ export default function CustomerLedger({ customerId, onBack, onBalanceChange, on
             Remind on WA
           </a>
           <button
-            onClick={handleCopyClipboard}
+            onClick={() => {
+              handleCopyClipboard();
+              trackEvent('reminder_sent', {
+                priority: 'Manual',
+                amount: customer.balance,
+                days_overdue: 0,
+                method: 'clipboard'
+              });
+            }}
             className="p-4 border border-brand-gray-200 hover:bg-brand-gray-100 rounded-xl text-brand-gray-600 transition-all cursor-pointer"
             title="Copy Reminder message"
           >

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Reminder } from '../types';
 import { MessageSquare, PhoneCall, CheckSquare, BellRing, AlertCircle, Calendar } from 'lucide-react';
+import { trackEvent } from '../utils/analytics';
 
 interface RemindersProps {
   reminders: Reminder[];
@@ -119,7 +120,15 @@ export default function Reminders({ reminders, onNavigate, shopName }: Reminders
               <div className="flex items-center gap-3 w-full md:w-auto justify-end md:justify-start shrink-0">
                 <a
                   href={`tel:${rem.customer_phone}`}
-                  onClick={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    trackEvent('reminder_sent', {
+                      priority: rem.priority,
+                      amount: rem.amount,
+                      days_overdue: rem.days_overdue,
+                      method: 'phone'
+                    });
+                  }}
                   className="flex items-center justify-center gap-2 px-5 py-3 text-sm font-bold rounded-xl text-brand-dark bg-brand-gray-100 hover:bg-brand-gray-200 transition-colors border border-brand-gray-200 cursor-pointer shadow-sm"
                   title="Call Customer"
                 >
@@ -131,7 +140,15 @@ export default function Reminders({ reminders, onNavigate, shopName }: Reminders
                   href={whatsappUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    trackEvent('reminder_sent', {
+                      priority: rem.priority,
+                      amount: rem.amount,
+                      days_overdue: rem.days_overdue,
+                      method: 'whatsapp'
+                    });
+                  }}
                   className="flex items-center justify-center gap-2 px-5 py-3 text-sm font-bold rounded-xl text-white bg-brand-green hover:bg-green-700 transition-all shadow-soft cursor-pointer"
                   title="Send WhatsApp Reminder"
                 >
